@@ -1,0 +1,21 @@
+# Васильевский остров (Санкт-Петербург). Данные: github.com/IDUclub/blocksnet-data, cities/saint_petersburg/data
+# Пути — относительно этого файла.
+name: spb
+mode: layers
+blocks: ../examples/spb_vasilievsky/blocks.geojson
+block_id_field: block_id
+buildings: ../examples/spb_vasilievsky/buildings.geojson
+fields:
+  footprint: building_area
+  is_living: is_living
+  storeys: storeys_count
+  living_area: living_area
+  population: population_balanced
+services: ../examples/spb_vasilievsky/services       # папка: один файл = один тип сервиса
+zones: ../examples/spb_vasilievsky/functional_zones.geojson
+zone_field: functional_zone
+zone_rules:                 # нежилое здание без сервисов: зона «ТП…» → П, «ТД…» → ОД, иначе X
+  - [ТП, П]
+  - [ТД, ОД]
+territory: [8346, 9366, 2059]   # промзона у наб. Макарова
+params: {}                  # всё по умолчанию (mixuse/params.py)

@@ -1,0 +1,17 @@
+# Гатчина. Готовая таблица кварталов (релиз v2026-data-gatchina, github.com/Eynor-K/blocksnet-agent)
+name: gatchina
+mode: table
+blocks: ../examples/gatchina/blocks_with_services.gpkg
+block_id_field: block_id
+block_zone_field: land_use
+zone_rules:
+  - [LandUse.INDUSTRIAL, П]
+  - [LandUse.BUSINESS, ОД]
+count_prefix: count_
+capacity_prefix: capacity_
+fields:
+  population: population
+  living_area: living_area
+  non_living_area: non_living_area
+territory: [322, 323, 377]      # промзона; по мастер-плану — «научно-промышленная»
+params: {}
