@@ -7,7 +7,7 @@ import os
 import yaml
 
 from .params import DEFAULTS, SCENARIOS
-from .groups import load_service_groups, KNOWN_GROUPS
+from .groups import load_group_table
 
 
 class ConfigError(ValueError):
@@ -17,9 +17,9 @@ class ConfigError(ValueError):
 _PATH_KEYS = ('blocks', 'buildings', 'zones', 'services', 'service_groups')
 _YES = {'да', 'yes', 'true', 'вкл', '1'}
 _NO = {'нет', 'no', 'false', 'выкл', '0'}
-_KNOWN_KEYS = {'name', 'mode', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field', 'zones',
+_KNOWN_KEYS = {'name', 'title', 'mode', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field', 'zones',
                'zone_field', 'zone_rules', 'block_zone_field', 'count_prefix', 'capacity_prefix', 'fields',
-               'territory', 'params', 'scenarios', 'service_groups', 'clip_ids', 'output'}
+               'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'output'}
 
 
 def _yes_no(v, key):
@@ -93,6 +93,7 @@ def load_config(path):
     cfg.setdefault('name', os.path.splitext(os.path.basename(path))[0])
     cfg.setdefault('mode', 'layers')
     cfg['fields'] = cfg.get('fields') or {}
+    cfg.setdefault('capacity_field', 'capacity')
     cfg['params'] = merge_params(cfg.get('params'))
     cfg['scenarios'] = cfg.get('scenarios') or dict(SCENARIOS)
     cfg['zone_rules'] = _rules(cfg.get('zone_rules'))
@@ -102,11 +103,11 @@ def load_config(path):
     except (TypeError, ValueError):
         raise ConfigError(f'territory: нужен список номеров кварталов, например [12, 13], получено {terr!r}.')
     try:
-        cfg['_groups'] = load_service_groups(cfg.get('service_groups'))
+        cfg['_groups'] = load_group_table(cfg.get('service_groups'))
     except (OSError, ValueError) as e:
         raise ConfigError(str(e))
     cfg['_path'] = os.path.abspath(path)
     return cfg
 
 
-__all__ = ['load_config', 'merge_params', 'ConfigError', 'KNOWN_GROUPS']
+__all__ = ['load_config', 'merge_params', 'ConfigError']

@@ -137,9 +137,9 @@ def cmd_compare(args):
     show = args.show or (list(SCN)[1] if len(SCN) > 1 else list(SCN)[0])
     if show not in SCN:
         raise ConfigError(f'--show: варианта «{show}» нет. Есть: {", ".join(SCN)}')
-    files += [export.map_png(city, det, show, P['R'], code, export.out_path(out, code, f'карта_{show.split()[0]}.png')),
+    files += [export.map_png(city, det, show, P['R'], cfg.get('title') or code, export.out_path(out, code, f'карта_{show.split()[0]}.png')),
               export.blocks_geojson(city, export.out_path(out, code, 'кварталы.geojson'), det, SCN),
-              export.web_json(city, export.out_path(out, code, 'для_страницы.json')),
+              export.web_json(city, cfg, export.out_path(out, code, 'для_страницы.json')),
               export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt'))]
     _say('\nСохранено:'); [_say('  ' + f) for f in files]
     return 0

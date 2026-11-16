@@ -8,9 +8,6 @@ import os
 import numpy as np
 import pandas as pd
 
-# порядок столбцов таблицы кварталов — как в ноутбуке; новые столбцы — в конце
-BLOCK_COLUMNS = ['block_id', 'zone', 'area', 'pop', 'liv', 'nr_К', 'nr_ОД', 'nr_П', 'nr_X', 'n_К', 'n_ОД', 'n_П',
-                 'cap_school', 'cap_kinder', 'jobs', 'есть_К', 'есть_ОД', 'есть_П', 'встр_К', 'встр_ОД']
 
 
 def out_path(out_dir, code, suffix):
@@ -20,9 +17,7 @@ def out_path(out_dir, code, suffix):
 
 def blocks_csv(city, path):
     """Таблица кварталов (results/<код>_таблица_кварталов.csv), округление до 0,1."""
-    t = city['table']
-    cols = [c for c in BLOCK_COLUMNS if c in t] + [c for c in t.columns if c not in BLOCK_COLUMNS and c not in ('cx', 'cy')]
-    t[cols].round(1).to_csv(path, index=False, encoding='utf-8-sig')
+    city['table'].drop(columns=['cx', 'cy']).round(1).to_csv(path, index=False, encoding='utf-8-sig')
     return path
 
 
@@ -61,13 +56,22 @@ def blocks_geojson(city, path, det=None, SCN=None):
     return path
 
 
-def web_json(city, path):
-    """Шаг 9. Файл данных для страницы «Конструктор смешанности» (формат ноутбука)."""
+# параметры, которые не нужны странице (она пересчитывает только шаги 5–6)
+_WEB_SKIP = ('S_min', 'storeys_default', 'builtin', 'builtin_s0', 'builtin_share', 'builtin_min_storeys')
+
+
+def web_json(city, cfg, path):
+    """Шаг 9. Файл данных для страницы «Конструктор смешанности» (формат ноутбука v4, format_version 1)."""
     proj = city['proj']
-    origin = [proj.lon0, proj.lat0, proj.kx, proj.ky] if proj else [0, 0, 1, 1]
-    web = {'origin': origin, 'blocks': [],
-           'pts': {'metro': np.round(city['pts']['метро'], 1).tolist(), 'stop': np.round(city['pts']['остановка'], 1).tolist(),
-                   'plant': np.round(city['pts']['производство'], 1).tolist()}}
+    P, SCN = cfg['params'], cfg['scenarios']
+    origin = [proj.lon0, proj.lat0, proj.kx, proj.ky] if proj else [0, 0, 1, 1]   # как перевести координаты контуров в метры
+    web = {'format': 'konstruktor-smeshannosti', 'format_version': 1,
+           'meta': {'city': cfg.get('title') or cfg['name'], 'source': 'метод_сравнения_вариантов.ipynb, шаг 9',
+                    'blocks_crs': 'градусы' if proj else f'EPSG:{city["epsg"]}'},
+           'params': {k: v for k, v in P.items() if k not in _WEB_SKIP}, 'scenarios': SCN,
+           'presets': [{'name': 'Территория из ноутбука', 'ids': [int(i) for i in cfg['territory']]}],
+           'origin': origin, 'blocks': [],
+           'pts': {'metro': np.round(city['pts']['метро'], 1).tolist(), 'stop': np.round(city['pts']['остановка'], 1).tolist()}}
     for k, row in city['table'].iterrows():
         web['blocks'].append({
             'id': int(row['block_id']), 'zone': None if pd.isna(row['zone']) else str(row['zone']).replace('LandUse.', ''),

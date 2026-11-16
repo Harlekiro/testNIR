@@ -9,7 +9,7 @@ import re
 import pandas as pd
 
 from .geometry import read_layer, describe_crs
-from .groups import load_service_groups
+from .groups import load_group_table
 from .params import DEFAULTS, SCENARIOS, PARAM_HELP
 
 _EXT = ('.geojson', '.gpkg', '.json')
@@ -86,7 +86,7 @@ def make_config(data_dir, name=None, out=None):
     unused_dirs = [d for d in subdirs if d not in svc]
     unused_files = [p for p in files if p not in found.values()]
 
-    groups = load_service_groups()
+    groups = load_group_table()
     L = []
     w = L.append
     w(f'# Настройки набора данных «{code}». Черновик составлен командой init по папке:')

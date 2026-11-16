@@ -135,25 +135,32 @@ def check_config(cfg):
                 crs[f'сервисы {os.path.basename(fp)}'] = (epsg, geo)
                 types.append(os.path.splitext(os.path.basename(fp))[0])
             if os.path.isdir(src):
-                used = [t for t in types if t in groups]
+                used = [t for t in types if groups.get(t, 'нет') != 'нет']
                 none = [t for t in types if t not in groups]
+                ignored = [t for t in types if groups.get(t) == 'нет']
                 info.append(f'сервисы {src}: {len(files)} файлов; с группой: '
                             + (', '.join(f'{t} → {groups[t]}' for t in used) or 'нет'))
                 if none:
-                    warn.append(f'Типы сервисов без группы (не учитываются): {", ".join(none)}. '
-                                f'Чтобы учесть — добавьте их в таблицу групп (service_groups:).')
-                for t in ('school', 'kindergarten'):
+                    warn.append(f'Типов нет в таблице групп (не учитываются): {", ".join(none)}. '
+                                f'Чтобы учесть — добавьте строки в таблицу групп (тип; название; код_ВРИ; группа).')
+                if ignored:
+                    info.append('не учитываются по таблице групп (группа «нет»): ' + ', '.join(ignored))
+                for t in [x for x in types if groups.get(x) in ('школа', 'детский_сад')]:
                     fp = [x for x in files if os.path.splitext(os.path.basename(x))[0] == t]
                     if fp:
                         df, *_ = _layer_info(fp[0])
-                        if 'capacity' not in df:
-                            warn.append(f'У объектов «{t}» нет поля capacity: число мест будет 0.')
+                        capf = cfg.get('capacity_field', 'capacity')
+                        if not capf or capf not in df:
+                            warn.append(f'У объектов «{t}» нет поля числа мест «{capf}»: принято 0 мест.')
                         else:
-                            n = int(pd.to_numeric(df['capacity'], errors='coerce').isna().sum())
+                            n = int(pd.to_numeric(df[capf], errors='coerce').isna().sum())
                             if n:
                                 warn.append(f'У {n} объектов «{t}» не указано число мест: принято 0.')
-            elif cfg.get('service_type_field', 'service_type') not in _layer_info(src)[0]:
-                err.append(f'В файле сервисов {src} нет поля типа «{cfg.get("service_type_field", "service_type")}».')
+            else:
+                fld = cfg.get('service_type_field')
+                flist = fld if isinstance(fld, (list, tuple)) else [fld]
+                if fld is None or not any(x in _layer_info(src)[0] for x in flist):
+                    err.append(f'В файле сервисов {src} нет поля типа {fld} (service_type_field:).')
     # --- системы координат
     systems = {}
     for name, (epsg, geo) in crs.items():
@@ -179,21 +186,23 @@ def check_config(cfg):
 
 
 # ================================================================================================
-# ШАГ 7. Проверка устойчивости: R = 500, 800, 1000 м; КИТ = 1,4; 2,0 (как в ноутбуке)
+# ШАГ 7. Проверка устойчивости: R = 500, 800, 1000 м; КИТ = 1,4; 2,0 (как в ноутбуке v4)
 # ================================================================================================
 
 def sensitivity(city, T, P, SCN, Rs=(500, 800, 1000), kits=(1.4, 2.0)):
-    """Шаг 7. Сравнение повторяется при других R и КИТ. Таблица — как results/<код>_устойчивость.csv."""
+    """Шаг 7. Сравнение повторяется при других R и КИТ: K окружения «как есть», изменение K
+    в каждом варианте (K варианта − K как есть) и нехватка мест в школах.
+    Таблица — как results/<код>_устойчивость.csv. Порядка вариантов нет."""
     rows = []
     for R in Rs:
         for kit in kits:
             tb, inf, _ = compare(city, T, dict(P, R=R, kit=kit), SCN)
-            dev = tb.loc['Отклонение от среднего |K−K_ref|', list(SCN)].astype(float)
-            sch = tb.loc['Школы: свободно (+) / не хватает (−), мест', list(SCN)]
+            k = tb.loc['Работа на жителя K: окружение'].astype(float)
+            sch = tb.loc['Школы: не хватает мест', list(SCN)]
             rows.append({'R, м': R, 'КИТ': kit, 'кварталов в окружении': inf['кварталов в окружении'],
-                         'порядок по близости K к среднему': ' < '.join(s.split()[0] for s in dev.sort_values().index),
-                         **{f'|K−K_ref| {s.split()[0]}': dev[s] for s in SCN},
-                         **{f'школы {s.split()[0]}': sch[s] for s in SCN}})
+                         'K окружения как есть': k['Как есть'],
+                         **{f'изменение K {s.split()[0]}': round(k[s] - k['Как есть'], 2) for s in SCN},
+                         **{f'школы: не хватает мест {s.split()[0]}': sch[s] for s in SCN}})
     return pd.DataFrame(rows)
 
 
@@ -201,30 +210,21 @@ def sensitivity(city, T, P, SCN, Rs=(500, 800, 1000), kits=(1.4, 2.0)):
 # ШАГ 7б. Встроенные помещения: без них и при s0 = 50, 100, 300 м²
 # ================================================================================================
 
-def builtin_sensitivity(L, cfg, P, T_ids, SCN, s0_values=(50, 100, 300)):
-    """Шаг 7б. Таблица кварталов пересчитывается без встроенных помещений и при разных s0.
+def builtin_sensitivity(L, cfg, P, T, SCN, s0_values=(50, 100, 300)):
+    """Шаг 7б. Таблица кварталов и сравнение пересчитываются без встроенных помещений и при разных s0.
 
-    Формат таблицы предварительный: эталона `_встроенные.csv` нет — [УТОЧНИТЬ У АВТОРА].
-    В режиме «таблица» не считается (нет слоя зданий) — возвращает None.
+    Таблица — как results/<код>_встроенные.csv. В режиме «таблица» не считается (нет слоя зданий) — None.
+    Имя столбца «K окружения Как» повторяет ноутбук (первое слово названия варианта «Как есть»).
     """
     if L['mode'] != 'layers':
         return None
     rows = []
-    runs = [('без встроенных', dict(P, builtin=False))] + \
-           [(f's0 = {s0} м²', dict(P, builtin=True, builtin_s0=s0)) for s0 in s0_values]
-    for label, PP in runs:
-        city = table_from_layers(L, cfg, PP)
-        t, rep = city['table'], city['report']
-        row = {'расчёт': label,
-               'жилых домов со встроенными': rep.get('жилых домов со встроенными помещениями', 0),
-               'встроенная площадь К, м²': int(round(t['встр_К'].sum())),
-               'встроенная площадь ОД, м²': int(round(t['встр_ОД'].sum())),
-               'рабочих мест': int(round(t['jobs'].sum())),
-               'K_ref': rep['K_ref — рабочих мест на жителя в среднем']}
-        if T_ids:
-            tb, inf, _ = compare(city, T_ids, PP, SCN)
-            row['рабочих мест в окружении'] = inf['рабочих мест в окружении']
-            for name in tb.columns:
-                row[f'K {name.split()[0] if name != "Как есть" else "как есть"}'] = tb.loc['Работа на жителя K', name]
-        rows.append(row)
+    runs = [('без встроенных', dict(P, builtin=False))] + [(f's0 = {s0} м²', dict(P, builtin_s0=s0)) for s0 in s0_values]
+    for name, pp in runs:
+        c2 = table_from_layers(L, cfg, pp); t2 = c2['table']
+        tb, inf, _ = compare(c2, T, pp, SCN)
+        rows.append({'расчёт': name,
+                     'встроенная площадь К, м²': int(round(t2['встр_К'].sum())), 'встроенная площадь ОД, м²': int(round(t2['встр_ОД'].sum())),
+                     'рабочих мест': int(round(t2['jobs'].sum())), 'K_ref': round(float(t2['jobs'].sum() / t2['pop'].sum()), 3),
+                     **{f'K окружения {s.split()[0]}': tb.loc['Работа на жителя K: окружение', s] for s in ['Как есть'] + list(SCN)}})
     return pd.DataFrame(rows)

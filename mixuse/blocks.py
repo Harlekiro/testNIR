@@ -3,8 +3,9 @@
 Файл разделён на две части:
   * чтение слоёв (load_*) — открывает файлы и приводит координаты к системе кварталов;
   * расчёт (table_from_layers, table_from_table, finish_table) — только формулы, без файлов и печати.
-Расчёт повторяет ноутбук; новое — только встроенные помещения (переключатель `builtin`).
-Номера формул — по `docs/метод.md` [НУЖЕН ФАЙЛ: номера формул сверить, когда автор пришлёт документ].
+Расчёт повторяет листинг ноутбука v4 (16.11.2026). Добавлено: приведение слоёв в разных системах
+координат к системе кварталов и счётчики допущений в отчёте.
+Номера формул по `docs/метод.md` — [НУЖЕН ФАЙЛ: сверить, когда автор пришлёт документ].
 """
 import os
 from collections import defaultdict
@@ -13,8 +14,8 @@ import numpy as np
 import pandas as pd
 
 from .geometry import (read_layer, LocalProjection, project, poly_area, centroid, inner_point,
-                       assign_points, BlockGeometry, to_frame, check_crs, describe_crs)
-from .groups import FUNCS, zone_group, building_group
+                       assign_points, BlockGeometry, to_frame, check_crs)
+from .groups import FUNCS, NOT_IN_TABLE, zone_group, building_group
 
 
 class DataError(ValueError):
@@ -26,22 +27,20 @@ class DataError(ValueError):
 # ================================================================================================
 
 def load_blocks(cfg):
-    """Шаг 1. Кварталы: чтение, отбор, перевод в метры, площадь, центр, зона.
+    """Шаг 1. Кварталы: чтение, перевод в метры, площадь, центр; зона — та, в которую попадает центр.
 
-    Как в ноутбуке. Дополнительно возвращается frame — система координат кварталов,
-    к которой приводятся остальные слои, и список выполненных пересчётов координат.
+    Дополнительно возвращает frame — систему координат кварталов, к которой приводятся остальные слои,
+    и список выполненных пересчётов координат.
     """
     df, geoms, geographic = read_layer(cfg['blocks'])
     epsg = df.attrs.get('epsg')
     check_crs(epsg, geographic, 'кварталы')
     idf = cfg.get('block_id_field')
-    df['block_id'] = df[idf].astype(int) if idf and idf in df else np.arange(len(df))
+    df['block_id'] = pd.to_numeric(df[idf]).astype(int) if idf and idf in df else np.arange(len(df))
     df['_g'] = geoms
     df = df[[g[0] == 'poly' for g in geoms]].copy()
     if len(df) == 0:
         raise DataError(f'В слое кварталов {cfg["blocks"]} нет полигонов.')
-    if cfg.get('clip_ids') is not None:
-        df = df[df['block_id'].isin(set(cfg['clip_ids']))].copy()
     df = df.reset_index(drop=True)
     proj = None
     if geographic:
@@ -67,43 +66,54 @@ def load_blocks(cfg):
     return df, frame, notes
 
 
-def _service_files(src):
-    if os.path.isdir(src):
-        return [os.path.join(src, f) for f in sorted(os.listdir(src)) if f.lower().endswith(('.geojson', '.gpkg'))], True
-    return [src], False
+def service_files(src):
+    """Файлы сервисов: путь или список путей; папка → все .geojson/.gpkg в ней (тип = имя файла)."""
+    out = []
+    for p in (src if isinstance(src, (list, tuple)) else [src]):
+        if os.path.isdir(p):
+            out += [(os.path.join(p, x), True) for x in sorted(os.listdir(p)) if x.endswith(('.geojson', '.gpkg'))]
+        else:
+            out.append((p, False))
+    return out
+
+
+def service_type_of(df, field, fallback):
+    """Тип сервиса: имя файла (папка «один файл — один тип»); значение поля; для списка полей OSM —
+    «поле=значение» первого непустого поля (например, amenity=school)."""
+    if field is None:
+        return pd.Series(fallback, index=df.index)
+    if isinstance(field, (list, tuple)):
+        out = pd.Series('', index=df.index)
+        for f in field:
+            if f in df:
+                v = df[f].astype(str).where(df[f].notna() & (df[f].astype(str).str.len() > 0), '')
+                out = out.where(out != '', np.where(v != '', f + '=' + v, ''))
+        return out
+    return df[field].astype(str)
 
 
 def load_services(cfg, frame, groups):
-    """Шаг 2. Сервисы: папка «один файл — один тип» или один файл с полем типа; точка для каждого
-    объекта; группа по таблице групп. Источников может быть несколько (список в настройках)."""
-    srcs = cfg['services'] if isinstance(cfg['services'], (list, tuple)) else [cfg['services']]
+    """Шаг 2. Сервисы: точка для каждого объекта, тип, число мест, группа по таблице групп."""
     frames, notes = [], []
-    for src in srcs:
-        files, is_dir = _service_files(src)
-        for path in files:
-            df, g, geo = read_layer(path)
-            name = os.path.splitext(os.path.basename(path))[0]
-            if is_dir:
-                df['service_type'] = name
-            else:
-                fld = cfg.get('service_type_field', 'service_type')
-                if fld not in df:
-                    raise DataError(f'В файле сервисов {path} нет поля типа «{fld}». Укажите service_type_field в настройках.')
-                df['service_type'] = df[fld]
-            if len(df) == 0:
-                continue
-            g, note = to_frame(g, df.attrs.get('epsg'), geo, frame, f'сервисы {name}')
-            if note: notes.append(note)
-            pts = [gg[1] if gg[0] == 'point' else (inner_point(gg[1]) if gg[0] == 'poly' else None) for gg in g]
-            df['x'] = [p[0] if p is not None else np.nan for p in pts]; df['y'] = [p[1] if p is not None else np.nan for p in pts]
-            df['capacity'] = pd.to_numeric(df['capacity'], errors='coerce') if 'capacity' in df else np.nan
-            frames.append(df[['service_type', 'x', 'y', 'capacity']])
+    capf = cfg.get('capacity_field', 'capacity')
+    for path, in_folder in service_files(cfg['services']):
+        df, g, geo = read_layer(path)
+        df = df.copy()
+        name = os.path.splitext(os.path.basename(path))[0]
+        fld = None if in_folder else cfg.get('service_type_field')
+        if fld is not None and not any(x in df for x in (fld if isinstance(fld, (list, tuple)) else [fld])):
+            raise DataError(f'В файле сервисов {path} нет поля типа {fld}. Укажите service_type_field в настройках.')
+        df['service_type'] = service_type_of(df, fld, name).values
+        g, note = to_frame(g, df.attrs.get('epsg'), geo, frame, f'сервисы {name}')
+        if note: notes.append(note)
+        pts = [gg[1] if gg[0] == 'point' else (inner_point(gg[1]) if gg[0] == 'poly' else None) for gg in g]
+        df['x'] = [p[0] if p is not None else np.nan for p in pts]; df['y'] = [p[1] if p is not None else np.nan for p in pts]
+        df['capacity'] = pd.to_numeric(df[capf], errors='coerce') if capf and capf in df else np.nan
+        frames.append(df[['service_type', 'x', 'y', 'capacity']])
     if not frames:
-        s = pd.DataFrame({'service_type': pd.Series(dtype=object), 'x': pd.Series(dtype=float),
-                          'y': pd.Series(dtype=float), 'capacity': pd.Series(dtype=float)})
-    else:
-        s = pd.concat(frames, ignore_index=True).dropna(subset=['x', 'y'])
-    s['group'] = s['service_type'].map(groups).fillna('не используется')
+        raise DataError(f'Сервисы не найдены: {cfg["services"]}')
+    s = pd.concat(frames, ignore_index=True).dropna(subset=['x', 'y'])
+    s['group'] = s['service_type'].map(groups).fillna(NOT_IN_TABLE)
     return s, notes
 
 
@@ -131,45 +141,34 @@ def load_layers(cfg, groups):
 # РАСЧЁТ
 # ================================================================================================
 
-def _num(series):
-    return pd.to_numeric(series, errors='coerce')
-
-
-def _is_living(series):
-    """Признак «жилое»: числа > 0 (как в ноутбуке); текст «да/yes/true/1» — тоже жилое."""
-    try:
-        return series.fillna(0).astype(float) > 0          # как в ноутбуке
-    except (ValueError, TypeError):
-        txt = series.astype(str).str.strip().str.lower()
-        num = pd.to_numeric(series, errors='coerce')
-        return (num.fillna(0) > 0) | txt.isin(['да', 'yes', 'true', 'жилое', 'жилой'])
+def truthy(col):
+    """Признак «жилое»: жилыми считаются 1, True, да, yes (как в ноутбуке)."""
+    s = col.astype(str).str.strip().str.lower()
+    return s.isin(['1', '1.0', 'true', 'да', 'yes', 'y', 'жилое', 'жилой'])
 
 
 def builtin_premises(n_K, n_OD, footprint, s0, share):
-    """Встроенные помещения жилого дома (метод, шаг 4, п. 4).
+    """Встроенные помещения одного жилого дома (метод, шаг 4, п. 4).
 
-        B = min(n · s0, β · S),   n = n_К + n_ОД,
-        B_К = B · n_К / n,  B_ОД = B · n_ОД / n,
-    где S — площадь застройки дома, s0 — площадь одного помещения, β — предельная доля первого этажа.
-    Возвращает (B, B_К, B_ОД) — массивы по домам.
+        B = min(n · s0, β · S),   n = n_К + n_ОД;    B_g = B · n_g / n,
+    где S — площадь застройки, s0 — площадь одного помещения, β — предельная доля первого этажа.
+    Если s0 не задано (0 или None) — B = β · S. Возвращает (B_К, B_ОД, ограничено_долей_этажа).
     """
-    n_K = np.asarray(n_K, float); n_OD = np.asarray(n_OD, float); n = n_K + n_OD
-    B = np.minimum(n * s0, share * np.asarray(footprint, float))
-    with np.errstate(invalid='ignore', divide='ignore'):
-        BK = np.where(n > 0, B * n_K / np.where(n > 0, n, 1), 0.0)
-    return B, BK, B - BK
+    n = n_K + n_OD
+    lim = footprint * share
+    area = min(lim, n * s0) if s0 else lim
+    return area * n_K / n, area * n_OD / n, bool(s0) and n * s0 > lim
 
 
 def table_from_layers(L, cfg, P):
-    """Шаги 2–4 для исходных слоёв.
+    """Шаги 2–4, режим «слои».
 
     3. Здания и сервисы → точки → номер квартала.
     4. Поэтажная площадь A = S · этажность (нет этажности → storeys_default);
-       встроенные помещения B (если builtin) — см. builtin_premises;
+       встроенные помещения B (если builtin) — builtin_premises;
        жилая площадь — из поля, иначе (A − B) · k_liv; для домов с B > 0 — не больше (A − B) · k_liv;
-       жители — из поля, иначе жилая площадь ÷ q (жители дома со встроенными помещениями не меняются);
+       жители — из поля, иначе жилая площадь ÷ q; у нежилых зданий жителей и жилой площади нет;
        группа нежилого здания (S ≥ S_min) — building_group; NR_g = Σ A нежилых зданий группы g в квартале.
-    При builtin = нет расчёт совпадает с ноутбуком до введения встроенных помещений.
     """
     blocks = L['blocks']
     report = {'кварталов': len(blocks)}
@@ -177,14 +176,16 @@ def table_from_layers(L, cfg, P):
 
     # --- сервисы
     s = L['services']
+    n_all = len(s)
     s = s[(s.x >= lo[0]) & (s.x <= hi[0]) & (s.y >= lo[1]) & (s.y <= hi[1])].reset_index(drop=True)
     s['block'] = assign_points(s[['x', 'y']].to_numpy(), list(blocks['polys']))
     report['сервисов в кварталах'] = int((s.block >= 0).sum())
-    report['сервисов вне кварталов (не учтены)'] = int((s.block < 0).sum()) + int(len(L['services']) - len(s))
-    report['типы без группы'] = sorted(s.loc[s.group == 'не используется', 'service_type'].unique().tolist())
-    for g, name in [('школа', 'школ'), ('сад', 'детских садов')]:
-        m = (s.block >= 0) & (s.group == g)
-        report[f'{name} без числа мест (принято 0 мест)'] = int((m & s.capacity.isna()).sum())
+    for g in FUNCS + ['школа', 'детский_сад']:
+        report[f'  из них {g}'] = int(((s.block >= 0) & (s.group == g)).sum())
+    report['сервисов вне кварталов (не учтены)'] = int((s.block < 0).sum()) + (n_all - len(s))
+    report['типы не из таблицы групп (не учтены)'] = sorted(s.loc[s.group == NOT_IN_TABLE, 'service_type'].unique().tolist())
+    for g, what in [('школа', 'школ'), ('детский_сад', 'детских садов')]:
+        report[f'{what} без числа мест (принято 0 мест)'] = int(((s.block >= 0) & (s.group == g) & s.capacity.isna()).sum())
 
     # --- здания
     bdf, bpolys = L['buildings'], L['bpolys']
@@ -198,83 +199,79 @@ def table_from_layers(L, cfg, P):
     report['зданий в кварталах'] = len(bdf)
     f = cfg['fields']
     if f.get('footprint') in bdf:
-        bdf['footprint'] = _num(bdf[f['footprint']])
-        report['зданий без площади застройки (не учтены)'] = int(bdf['footprint'].isna().sum())
+        fp = pd.to_numeric(bdf[f['footprint']], errors='coerce')
+        report['зданий без площади застройки (принято 0)'] = int(fp.isna().sum())
+        bdf['footprint'] = fp.fillna(0)
     else:
         bdf['footprint'] = [poly_area(p) for p in bpolys]
-        report['площадь застройки'] = 'по контуру зданий (поля нет)'
-    bdf['living'] = _is_living(bdf[f['is_living']]) if f.get('is_living') in bdf else False
-    st = _num(bdf[f['storeys']]) if f.get('storeys') in bdf else pd.Series(np.nan, index=bdf.index)
+        report['площадь застройки'] = 'по контуру зданий (поле не задано)'
+    bdf['living'] = truthy(bdf[f['is_living']])
+    st = pd.to_numeric(bdf[f['storeys']], errors='coerce') if f.get('storeys') in bdf else pd.Series(np.nan, index=bdf.index)
     st = st.where(st > 0)
-    report['зданий без этажности'] = int(st.isna().sum())
-    st = st.fillna(P['storeys_default'])   # нет этажности — считаем по умолчанию (1 этаж)
+    report['зданий без этажности (принят 1 этаж)'] = int(st.isna().sum())
+    st = st.fillna(P['storeys_default'])
     bdf['floor_area'] = bdf['footprint'] * st
 
-    # --- сервисы К, ОД, П для привязки к зданиям
-    fs = s[s.group.isin(FUNCS)].reset_index(drop=True)
-
-    # --- встроенные помещения в жилых домах
-    bdf['B'] = 0.0; bdf['B_К'] = 0.0; bdf['B_ОД'] = 0.0
-    if P.get('builtin'):
-        res = bdf.living.to_numpy() & (st.to_numpy() >= P['builtin_min_storeys'])
-        res_idx = np.where(res)[0]
-        kod = fs[fs.group.isin(['К', 'ОД'])].reset_index(drop=True)
-        if len(res_idx) and len(kod):
-            own = assign_points(kod[['x', 'y']].to_numpy(), [bpolys[i] for i in res_idx])
-            nK = np.zeros(len(bdf)); nOD = np.zeros(len(bdf))
-            for o, g in zip(own, kod.group):
-                if o >= 0:
-                    (nK if g == 'К' else nOD)[res_idx[o]] += 1
-            B, BK, BOD = builtin_premises(nK, nOD, bdf['footprint'].fillna(0).to_numpy(), P['builtin_s0'], P['builtin_share'])
-            bdf['B'], bdf['B_К'], bdf['B_ОД'] = B, BK, BOD
-        report['жилых домов со встроенными помещениями'] = int((bdf['B'] > 0).sum())
-        report['встроенная площадь К, м²'] = int(round(bdf['B_К'].sum()))
-        report['встроенная площадь ОД, м²'] = int(round(bdf['B_ОД'].sum()))
+    # --- встроенные помещения жилых домов
+    bdf['bi_К'] = 0.0; bdf['bi_ОД'] = 0.0
+    if P.get('builtin', True):
+        res_idx = np.where((bdf.living & (st >= P.get('builtin_min_storeys', 2))).to_numpy())[0]
+        bs = s[s.group.isin(['К', 'ОД'])].reset_index(drop=True)
+        own = assign_points(bs[['x', 'y']].to_numpy(), [bpolys[i] for i in res_idx]) if len(res_idx) and len(bs) else np.full(len(bs), -1)
+        cnt = defaultdict(lambda: {'К': 0, 'ОД': 0})
+        for o, g in zip(own, bs.group):
+            if o >= 0: cnt[res_idx[o]][g] += 1
+        capped = 0
+        for i, c in cnt.items():
+            bK, bOD, cap = builtin_premises(c['К'], c['ОД'], bdf.at[i, 'footprint'], P.get('builtin_s0'), P.get('builtin_share', 1.0))
+            bdf.at[i, 'bi_К'], bdf.at[i, 'bi_ОД'] = bK, bOD
+            capped += int(cap)
+        report['  домов, где площадь ограничена долей первого этажа'] = capped
+        report['жилых домов со встроенными помещениями'] = len(cnt)
+        report['  сервисов К и ОД в этих домах'] = int((own >= 0).sum())
+        report['  встроенная площадь К / ОД, м²'] = f"{int(round(bdf['bi_К'].sum()))} / {int(round(bdf['bi_ОД'].sum()))}"
     else:
         report['встроенные помещения'] = 'не учитываются (builtin: нет)'
-
-    k_liv = P['k_liv']
+    res_floor = bdf['floor_area'] - bdf['bi_К'] - bdf['bi_ОД']       # поэтажная площадь без встроенных помещений
     if f.get('living_area') in bdf:
-        la = _num(bdf[f['living_area']])
-        report['жилых домов без жилой площади (оценка A·k_liv)'] = int((la.isna() & bdf.living).sum())
-        liv0 = la.fillna(bdf['floor_area'] * k_liv)
-        liv = la.fillna((bdf['floor_area'] - bdf['B']) * k_liv)
-        cap = (bdf['floor_area'] - bdf['B']) * k_liv
-        liv = liv.where(~(bdf['B'] > 0), np.minimum(liv, cap))
+        la = pd.to_numeric(bdf[f['living_area']], errors='coerce')
+        report['жилых домов без жилой площади (оценка (A − B)·k_liv)'] = int((la.isna() & bdf.living).sum())
+        bdf['living_area'] = la.fillna(res_floor * P['k_liv'])
+        has_bi = (bdf['bi_К'] + bdf['bi_ОД']) > 0                     # только дома со встроенными помещениями
+        bdf['living_area'] = np.where(has_bi, np.minimum(bdf['living_area'], res_floor * P['k_liv']), bdf['living_area'])
     else:
-        liv0 = bdf['floor_area'] * k_liv
-        liv = (bdf['floor_area'] - bdf['B']) * k_liv
-        report['жилая площадь'] = 'оценка A·k_liv (поля нет)'
-    bdf['living_area'] = liv
+        bdf['living_area'] = res_floor * P['k_liv']
+        report['жилая площадь'] = 'оценка (A − B)·k_liv (поле не задано)'
     bdf.loc[~bdf.living, 'living_area'] = 0
     if f.get('population') in bdf:
-        pp = _num(bdf[f['population']])
-        report['зданий без числа жителей (принято 0)'] = int((pp.isna() & bdf.living).sum())
+        pp = pd.to_numeric(bdf[f['population']], errors='coerce')
+        report['жилых домов без числа жителей (принято 0)'] = int((pp.isna() & bdf.living).sum())
+        report['нежилых зданий с жителями в поле (обнулены)'] = int(((~bdf.living) & (pp.fillna(0) > 0)).sum())
         bdf['pop'] = pp.fillna(0)
-        report['нежилых зданий с жителями в поле (учтены как есть)'] = int(((~bdf.living) & (bdf['pop'] > 0)).sum())
     else:
-        # жители дома не меняются из-за встроенных помещений: считаются от жилой площади без B
-        liv0 = liv0.where(bdf.living, 0)
-        bdf['pop'] = liv0 / P['q']
-        report['жители'] = 'оценка: жилая площадь ÷ q (поля нет)'
+        bdf['pop'] = bdf['living_area'] / P['q']
+        report['жители'] = 'оценка: жилая площадь ÷ q (поле не задано)'
+    bdf.loc[~bdf.living, 'pop'] = 0
 
     # --- группа нежилого здания: сервисы внутри контура (П > ОД > К), иначе зона квартала
     nr = (~bdf.living) & (bdf['footprint'] >= P['S_min'])
-    report[f'нежилых зданий меньше S_min (не учтены)'] = int(((~bdf.living) & ~(bdf['footprint'] >= P['S_min'])).sum())
+    report['нежилых зданий меньше S_min (не учтены)'] = int(((~bdf.living) & ~nr).sum())
     nr_idx = np.where(nr)[0]
+    fs = s[s.group.isin(FUNCS)].reset_index(drop=True)
     owner = assign_points(fs[['x', 'y']].to_numpy(), [bpolys[i] for i in nr_idx]) if len(nr_idx) else np.full(len(fs), -1)
     found = defaultdict(set)
     for o, g in zip(owner, fs.group):
         if o >= 0: found[nr_idx[o]].add(g)
     rules = cfg.get('zone_rules', [])
     bdf['group'] = None
-    how = {'по сервисам': 0, 'по зоне': 0, 'X': 0}
+    by_service = 0
     for i in nr_idx:
         gs = found.get(i, set())
-        g = building_group(gs, blocks.at[bdf.at[i, 'block'], 'zone'], rules)
-        bdf.at[i, 'group'] = g
-        how['по сервисам' if gs else ('X' if g == 'X' else 'по зоне')] += 1
-    report['нежилых зданий: группа по сервисам / по зоне / X'] = f'{how["по сервисам"]} / {how["по зоне"]} / {how["X"]}'
+        by_service += bool(gs)
+        bdf.at[i, 'group'] = building_group(gs, blocks.at[bdf.at[i, 'block'], 'zone'], rules)
+    for g in FUNCS + ['X']:
+        report[f'нежилых зданий в группе {g}'] = int((bdf.group == g).sum())
+    report['  из них группа по сервисам внутри / по зоне или X'] = f'{by_service} / {len(nr_idx) - by_service}'
 
     # --- сводим в таблицу кварталов
     t = blocks[['block_id', 'zone', 'area', 'cx', 'cy']].copy()
@@ -282,43 +279,43 @@ def table_from_layers(L, cfg, P):
     t['liv'] = bdf.groupby('block')['living_area'].sum().reindex(t.index).fillna(0)
     for g in FUNCS + ['X']:
         t['nr_' + g] = bdf[bdf.group == g].groupby('block')['floor_area'].sum().reindex(t.index).fillna(0)
-    for g in ['К', 'ОД']:
-        t['встр_' + g] = bdf.groupby('block')['B_' + g].sum().reindex(t.index).fillna(0)
+    for g in ['К', 'ОД']:                                   # встроенные помещения жилых домов
+        t['встр_' + g] = bdf.groupby('block')['bi_' + g].sum().reindex(t.index).fillna(0)
         t['nr_' + g] = t['nr_' + g] + t['встр_' + g]
     for g in FUNCS:
         t['n_' + g] = s[(s.block >= 0) & (s.group == g)].groupby('block').size().reindex(t.index).fillna(0).astype(int)
-    for g, col in [('школа', 'cap_school'), ('сад', 'cap_kinder')]:
+    for g, col in [('школа', 'cap_school'), ('детский_сад', 'cap_kinder')]:
         t[col] = s[(s.block >= 0) & (s.group == g)].groupby('block')['capacity'].sum().reindex(t.index).fillna(0)
     pts = {g: s.loc[s.group == g, ['x', 'y']].to_numpy() for g in ['метро', 'остановка']}
-    pts['производство'] = s.loc[(s.group == 'П') & (s.block < 0), ['x', 'y']].to_numpy()
     return finish_table(t, L, P, pts, report)
 
 
 def table_from_table(L, cfg, P, groups):
-    """Шаги 2–4, если таблица кварталов уже собрана (данные Гатчины): берутся готовые жители,
-    площади и число сервисов; нежилая площадь относится к группе по назначению квартала.
-    Встроенные помещения в этом режиме не считаются: нет слоя зданий."""
+    """Шаги 2–4, режим «таблица» (данные Гатчины): готовые жители и площади по кварталу;
+    нежилая площадь относится к группе по зоне квартала; число сервисов и мест — по столбцам
+    count_/capacity_ и таблице групп. Встроенные помещения не считаются: нет слоя зданий."""
     blocks = L['blocks']
     f = cfg['fields']; t = blocks[['block_id', 'zone', 'area', 'cx', 'cy']].copy()
     for key in ('population', 'living_area', 'non_living_area'):
         if f.get(key) not in blocks:
             raise DataError(f'В таблице кварталов нет поля «{f.get(key)}» (fields.{key}).')
-    t['pop'] = _num(blocks[f['population']]).fillna(0)
-    t['liv'] = _num(blocks[f['living_area']]).fillna(0)
-    nonres = _num(blocks[f['non_living_area']]).fillna(0)
-    grp = [zone_group(z, cfg.get('zone_rules', [])) for z in blocks['zone']]
+    t['pop'] = pd.to_numeric(blocks[f['population']], errors='coerce').fillna(0)
+    t['liv'] = pd.to_numeric(blocks[f['living_area']], errors='coerce').fillna(0)
+    nonres = pd.to_numeric(blocks[f['non_living_area']], errors='coerce').fillna(0)
+    grp = np.array([zone_group(z, cfg.get('zone_rules', [])) for z in blocks['zone']])
     for g in FUNCS + ['X']:
-        t['nr_' + g] = np.where(np.array(grp) == g, nonres, 0.0)
-    t['встр_К'] = 0.0; t['встр_ОД'] = 0.0
+        t['nr_' + g] = np.where(grp == g, nonres, 0.0)
+    cp, kp = cfg.get('count_prefix', 'count_'), cfg.get('capacity_prefix', 'capacity_')
     for g in FUNCS:
-        cols = [cfg['count_prefix'] + s for s, gg in groups.items() if gg == g and cfg['count_prefix'] + s in blocks]
-        t['n_' + g] = blocks[cols].fillna(0).sum(axis=1).astype(int) if cols else 0
-    t['cap_school'] = _num(blocks.get(cfg['capacity_prefix'] + 'school', 0)).fillna(0)
-    t['cap_kinder'] = _num(blocks.get(cfg['capacity_prefix'] + 'kindergarten', 0)).fillna(0)
-    report = {'кварталов': len(t), 'режим': 'готовая таблица кварталов',
+        cols = [c for c in blocks.columns if str(c).startswith(cp) and groups.get(str(c)[len(cp):]) == g]
+        t['n_' + g] = blocks[cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1).astype(int) if cols else 0
+    for g, col in [('школа', 'cap_school'), ('детский_сад', 'cap_kinder')]:
+        cols = [c for c in blocks.columns if str(c).startswith(kp) and groups.get(str(c)[len(kp):]) == g]
+        t[col] = blocks[cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1) if cols else 0.0
+    report = {'кварталов': len(t), 'режим': 'готовая таблица кварталов (нежилая площадь — по зоне квартала)',
               'встроенные помещения': 'не считаются (нет слоя зданий)'}
     empty = np.zeros((0, 2))
-    return finish_table(t, L, P, {'метро': empty, 'остановка': empty, 'производство': empty}, report)
+    return finish_table(t, L, P, {'метро': empty, 'остановка': empty}, report)
 
 
 def finish_table(t, L, P, pts, report):
@@ -333,6 +330,7 @@ def finish_table(t, L, P, pts, report):
         t['есть_' + g] = (t['n_' + g] > 0) | (t['nr_' + g] > 0)
     report['жителей'] = int(round(t['pop'].sum())); report['рабочих мест (оценка)'] = int(round(t['jobs'].sum()))
     report['K_ref — рабочих мест на жителя в среднем'] = round(float(t['jobs'].sum() / t['pop'].sum()), 3) if t['pop'].sum() > 0 else None
+    report['мест в школах / детских садах'] = f"{int(t['cap_school'].sum())} / {int(t['cap_kinder'].sum())}"
     blocks = L['blocks']
     return {'table': t, 'polys': list(blocks['polys']), 'geom': BlockGeometry(list(blocks['polys'])),
             'orig': list(blocks['_g']), 'proj': L['frame']['proj'], 'pts': pts, 'report': report, 'epsg': L['epsg'],

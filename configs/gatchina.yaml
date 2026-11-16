@@ -1,5 +1,7 @@
 # Гатчина. Готовая таблица кварталов (релиз v2026-data-gatchina, github.com/Eynor-K/blocksnet-agent)
+# Соответствует примеру 'gatchina' ноутбука v4.
 name: gatchina
+title: Гатчина
 mode: table
 blocks: ../examples/gatchina/blocks_with_services.gpkg
 block_id_field: block_id
@@ -13,5 +15,5 @@ fields:
   population: population
   living_area: living_area
   non_living_area: non_living_area
-territory: [322, 323, 377]      # промзона; по мастер-плану — «научно-промышленная»
+territory: [322, 323, 377]      # промзона
 params: {}

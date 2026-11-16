@@ -1,6 +1,7 @@
 # Васильевский остров (Санкт-Петербург). Данные: github.com/IDUclub/blocksnet-data, cities/saint_petersburg/data
-# Пути — относительно этого файла.
+# Пути — относительно этого файла. Соответствует примеру 'spb' ноутбука v4.
 name: spb
+title: Санкт-Петербург, Васильевский остров
 mode: layers
 blocks: ../examples/spb_vasilievsky/blocks.geojson
 block_id_field: block_id
@@ -12,6 +13,7 @@ fields:
   living_area: living_area
   population: population_balanced
 services: ../examples/spb_vasilievsky/services       # папка: один файл = один тип сервиса
+capacity_field: capacity
 zones: ../examples/spb_vasilievsky/functional_zones.geojson
 zone_field: functional_zone
 zone_rules:                 # нежилое здание без сервисов: зона «ТП…» → П, «ТД…» → ОД, иначе X

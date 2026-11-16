@@ -1,7 +1,8 @@
-"""Шаги 5–6: окружение территории и сравнение вариантов (перенесено из ноутбука без изменений).
+"""Шаги 5–6: окружение территории и сравнение вариантов (как в листинге ноутбука v4).
 
 Чистые функции: на входе — таблица кварталов (результат blocks.build_table), номера кварталов
 территории, параметры и варианты; на выходе — таблица сравнения. Файлы не читаются и не пишутся.
+Сводного балла и порядка вариантов нет.
 """
 import numpy as np
 import pandas as pd
@@ -43,14 +44,18 @@ def environment(city, T, R):
 def compare(city, T_ids, P, SCN):
     """Шаги 5–6. Окружение и сравнение вариантов.
 
-    Для варианта с долями d (нормированы к 1):
+    Для варианта с долями d (нормированы к 1), существующая застройка территории заменяется полностью:
         F = S · КИТ;  N = F · d_Ж · k_liv / q;  J = F · (d_К/a_К + d_ОД/a_ОД + d_П/a_П);
-        K = (J_E + J) / (P_E + N);
-        доступ к g для жилого квартала b окружения (кварталы, контур которых не дальше r от центра b):
-          до    — есть квартал с функцией g (территория — в нынешнем виде);
-          после — есть квартал с g вне территории, либо d_g > 0 и территория не дальше r;
-        школы и сады: места − (P_E + N) · норма / 1000; места «как есть» — в E и T, в варианте — только в E.
-    Существующая застройка территории в варианте заменяется полностью.
+    А. Работа и жильё:
+        ΔJ = J − J_T0;
+        K окружения = (J_E + J) / (P_E + N);
+        K по всем данным = (Σjobs − J_T0 + J) / (Σpop − P_T0 + N);
+    Б. Доступ к g для жилого квартала b окружения (кварталы, контур которых не дальше r от центра b):
+        до    — есть квартал с функцией g (территория — в нынешнем виде);
+        после — есть квартал с g вне территории, либо d_g > 0 и территория не дальше r;
+    В. Школы и сады: потребность = (P_E + N) · норма / 1000; места «как есть» — в E и T, в варианте — только в E;
+        обеспеченность = места / потребность; не хватает = max(0, потребность − места); с территории = N · норма / 1000.
+    «Как есть»: N = P_T0, J = J_T0.
     Возвращает (таблица сравнения, сводка об окружении, данные для карты).
     """
     t = city['table']; G = city['geom']
@@ -60,22 +65,24 @@ def compare(city, T_ids, P, SCN):
     S = t.area.iloc[T].sum(); F = S * P['kit']
     popE, jobsE = t['pop'].iloc[E].sum(), t['jobs'].iloc[E].sum()
     Kref = t['jobs'].sum() / t['pop'].sum()
+    popA, jobsA = t['pop'].sum(), t['jobs'].sum()                    # все загруженные кварталы
+    popT0, jobsT0 = t['pop'].iloc[T].sum(), t['jobs'].iloc[T].sum()  # территория в нынешнем виде
     pres = {g: t['есть_' + g].to_numpy() for g in FUNCS}
     near = {b: G.dist_from_point(*C[b]) <= P['r'] for b in E if t['pop'].iloc[b] > 0}
     Tpolys = [p for k in T for p in city['polys'][k]]
     rows, effect = {}, {}
     for name, sh in [('Как есть', None)] + list(SCN.items()):
         if sh is None:
-            N, J = t['pop'].iloc[T].sum(), t['jobs'].iloc[T].sum(); d = None
+            N, J, d = popT0, jobsT0, None
             capS = t.cap_school.iloc[list(E) + T].sum(); capK = t.cap_kinder.iloc[list(E) + T].sum()
         else:
             d = normalize(sh)
             N = F * d['Ж'] * P['k_liv'] / P['q']
             J = F * (d['К'] / P['a_К'] + d['ОД'] / P['a_ОД'] + d['П'] / P['a_П'])
-            capS, capK = t.cap_school.iloc[E].sum(), t.cap_kinder.iloc[E].sum()
+            capS, capK = t.cap_school.iloc[E].sum(), t.cap_kinder.iloc[E].sum()   # существующее на территории сносится
         K = (jobsE + J) / (popE + N)
-        acc = {}
-        eff = {}
+        Kall = (jobsA - jobsT0 + J) / (popA - popT0 + N)
+        acc, eff = {}, {}
         if d is not None:
             for g in FUNCS:
                 gain = lost = 0.0
@@ -86,24 +93,19 @@ def compare(city, T_ids, P, SCN):
                     if before and not after: lost += t['pop'].iloc[b]; eff[b] = eff.get(b, 0) - 1
                 acc[g] = (gain, lost)
         effect[name] = eff
-        # проверки ограничений
-        flags = []
-        if d is not None:
-            if P['kit'] > P['kit_max']: flags.append('КИТ выше предельного')
-            if d['Ж'] > 0:
-                near_p = sum(1 for c in np.where(pres['П'] & ~inT)[0]
-                             if dist_points_to_polys(np.vstack([r for p in city['polys'][c] for r in p]), Tpolys).min() <= P['r_szz'])
-                near_p += int((dist_points_to_polys(city['pts']['производство'], Tpolys) <= P['r_szz']).sum()) if len(city['pts']['производство']) else 0
-                if near_p: flags.append(f'производство в {P["r_szz"]} м ({near_p}) — проверить СЗЗ')
-                if d['П'] > 0: flags.append('только производства без СЗЗ за границей участка')
+        needS, needK = (popE + N) * P['n_school'] / 1000, (popE + N) * P['n_kinder'] / 1000
         rows[name] = {
-            'Новые жители N': int(round(N)), 'Рабочие места на территории J': int(round(J)),
+            'Жители на территории N': int(round(N)), 'Рабочие места на территории J': int(round(J)),
+            'Изменение рабочих мест к нынешним': '—' if d is None else int(round(J - jobsT0)),
             'Доля нежилых площадей, %': '' if d is None else round(100 * (1 - d['Ж'])),
-            'Работа на жителя K': round(float(K), 2), 'Отклонение от среднего |K−K_ref|': round(float(abs(K - Kref)), 2),
+            'Работа на жителя K: окружение': round(float(K), 2), 'Работа на жителя K: все данные': round(float(Kall), 2),
             **{f'Доступ к {g}: получают / теряют, жителей': ('—' if d is None else f'+{acc[g][0]:,.0f} / −{acc[g][1]:,.0f}'.replace(',', ' ')) for g in FUNCS},
-            'Школы: свободно (+) / не хватает (−), мест': int(round(capS - (popE + N) * P['n_school'] / 1000)),
-            'Сады: свободно (+) / не хватает (−), мест': int(round(capK - (popE + N) * P['n_kinder'] / 1000)),
-            'Сигналы': '; '.join(flags) if flags else ('—' if d is None else 'нет'),
+            'Школы: ученики с территории': int(round(N * P['n_school'] / 1000)),
+            'Школы: обеспеченность окружения, %': int(round(100 * capS / needS)) if needS > 0 else '',
+            'Школы: не хватает мест': int(round(max(0.0, needS - capS))),
+            'Сады: дети с территории': int(round(N * P['n_kinder'] / 1000)),
+            'Сады: обеспеченность окружения, %': int(round(100 * capK / needK)) if needK > 0 else '',
+            'Сады: не хватает мест': int(round(max(0.0, needK - capK))),
         }
     out = pd.DataFrame(rows)
     info = {'кварталов на территории': len(T), 'площадь территории, га': round(float(S) / 1e4, 1), 'поэтажная площадь F, м²': int(round(F)),

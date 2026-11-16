@@ -69,7 +69,8 @@ def make_small(folder, other_crs=UTM, territory=(10,), extra=''):
     write_fc(os.path.join(sv, 'bank.geojson'), [('Point', pt(225, 25), {})], other_crs)
     write_fc(os.path.join(sv, 'school.geojson'), [('Point', pt(80, 280), {'capacity': 100})], other_crs)
     write_fc(os.path.join(sv, 'kindergarten.geojson'), [('Point', pt(1080, 80), {'capacity': None})], other_crs)
-    write_fc(os.path.join(sv, 'park.geojson'), [('Point', pt(90, 90), {})], other_crs)
+    write_fc(os.path.join(sv, 'park.geojson'), [('Point', pt(90, 90), {})], other_crs)          # группа «нет»
+    write_fc(os.path.join(sv, 'outpost.geojson'), [('Point', pt(95, 95), {})], other_crs)       # нет в таблице групп
     write_fc(os.path.join(d, 'zones.geojson'), [
         ('Polygon', sq(-10, -10, 120), {'code': 'ТП1'}), ('Polygon', sq(190, -10, 120), {'code': 'ТД1'}),
         ('Polygon', sq(990, -10, 120), {'code': 'ТР2'})], other_crs)

@@ -1,48 +1,49 @@
-"""Группы функций: справочник «тип сервиса → группа», группа нежилого здания.
+"""Группы функций: таблица «тип сервиса → группа», группа нежилого здания.
 
 Обозначения: Ж — жильё; К — торговля и бытовое обслуживание; ОД — общественно-деловая;
 П — производство и склады; X — нежилое здание без установленной функции.
+Группа сервиса задана в таблице по коду ВРИ: К — 3.3, 4.2, 4.3, 4.4, 4.6;
+ОД — 3.2.3, 3.5.2, 3.6.1, 3.8, 4.1, 4.5, 4.7; П — 6.x.
 """
-import csv
 import os
 
+import pandas as pd
+
 FUNCS = ['К', 'ОД', 'П']
+GROUPS_ALLOWED = ['К', 'ОД', 'П', 'школа', 'детский_сад', 'метро', 'остановка', 'нет']
+NOT_IN_TABLE = 'нет в таблице'
 
-# Внутренние имена групп — как в ноутбуке. В таблице групп допустимы и имена из ТЗ.
-_ALIASES = {'детский_сад': 'сад', 'детский сад': 'сад', 'нет': 'не используется', '': 'не используется'}
-KNOWN_GROUPS = {'К', 'ОД', 'П', 'школа', 'сад', 'метро', 'остановка', 'не используется'}
-
-DEFAULT_TABLE = os.path.join(os.path.dirname(__file__), 'data', 'таблица_групп_сервисов.csv')
+# таблица групп лежит в корне проекта (её же читает ноутбук)
+DEFAULT_TABLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'таблица_групп_сервисов.csv')
 
 
-def load_service_groups(path=None):
-    """Читает таблицу групп сервисов (CSV: тип_сервиса, группа, код_ВРИ, примечание).
+def load_group_table(path=None):
+    """Таблица групп (CSV, открывается в Excel; разделитель «;» или «,», UTF-8 с BOM).
 
-    Возвращает словарь {тип сервиса: группа}. Если путь не задан — встроенная таблица,
-    повторяющая справочник ноутбука.
+    Нужны столбцы «тип» и «группа». Ключ словаря — значение «тип», а также теги из столбца
+    «тег_OSM» (второй способ найти тип, например amenity=school). Как в ноутбуке.
     """
     path = path or DEFAULT_TABLE
-    out = {}
-    with open(path, encoding='utf-8-sig', newline='') as f:
-        rows = list(csv.DictReader(f))
-    if not rows:
-        raise ValueError(f'Таблица групп сервисов пуста: {path}')
-    cols = rows[0].keys()
-    tcol = next((c for c in ('тип_сервиса', 'service_type', 'тип') if c in cols), None)
-    gcol = next((c for c in ('группа', 'group') if c in cols), None)
-    if not tcol or not gcol:
-        raise ValueError(f'В таблице групп {path} нужны столбцы «тип_сервиса» и «группа»; найдены: {", ".join(cols)}')
-    for i, r in enumerate(rows, 2):
-        t = (r[tcol] or '').strip()
-        if not t:
-            continue
-        g = (r[gcol] or '').strip()
-        g = _ALIASES.get(g, g)
-        if g not in KNOWN_GROUPS:
-            raise ValueError(f'Таблица групп {path}, строка {i}: неизвестная группа «{r[gcol]}» у типа «{t}». '
-                             f'Допустимо: К, ОД, П, школа, детский_сад, метро, остановка, нет.')
-        out[t] = g
-    return out
+    if not os.path.exists(path):
+        raise FileNotFoundError(f'Нет таблицы групп сервисов: {path}.')
+    t = pd.read_csv(path, sep=None, engine='python', encoding='utf-8-sig', dtype=str).fillna('')
+    t.columns = [c.strip() for c in t.columns]
+    miss = {'тип', 'группа'} - set(t.columns)
+    if miss:
+        raise ValueError(f'В таблице групп {path} нет столбцов: {", ".join(sorted(miss))}. Нужны столбцы «тип» и «группа».')
+    bad = t[~t['группа'].str.strip().isin(GROUPS_ALLOWED)]
+    if len(bad):
+        raise ValueError(f'В таблице групп {path} неизвестные группы: '
+                         + ', '.join(f'{r.тип} → «{r.группа}»' for r in bad.itertuples())
+                         + '. Допустимо: ' + ', '.join(GROUPS_ALLOWED))
+    groups = {}
+    for r in t.itertuples():
+        groups[r.тип.strip()] = r.группа.strip()
+    for r in t.itertuples():       # теги OSM — второй способ найти тип
+        for tag in str(getattr(r, 'тег_OSM', '')).split(','):
+            if tag.strip():
+                groups.setdefault(tag.strip(), r.группа.strip())
+    return groups
 
 
 def zone_group(zone, rules):
