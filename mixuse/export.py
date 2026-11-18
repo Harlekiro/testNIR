@@ -88,9 +88,19 @@ def web_json(city, cfg, path):
 
 
 def map_png(city, det, show, R, title, path):
-    """Шаг 8. Карта: территория — фиолетовая, окружение обведено; зелёный — функции появились, оранжевый — пропали."""
+    """Шаг 8. Карта в файл PNG (командная строка: без окна на экране)."""
     import matplotlib
     matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    fig = map_figure(city, det, show, R, title)
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return path
+
+
+def map_figure(city, det, show, R, title):
+    """Шаг 8. Рисунок карты: территория — фиолетовая, окружение обведено; зелёный — функции появились,
+    оранжевый — пропали. Возвращает рисунок matplotlib (ноутбук показывает его и сохраняет)."""
     import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
     from matplotlib.patches import Patch
@@ -109,6 +119,4 @@ def map_png(city, det, show, R, title, path):
                        Patch(color='#3f9e5f', label='функции появились'), Patch(color='#f0a030', label='функции пропали')],
               loc='lower left', fontsize=9, frameon=False)
     ax.set_title(f'{title}: вариант {show}', fontsize=11)
-    fig.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    return path
+    return fig

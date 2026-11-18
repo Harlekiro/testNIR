@@ -79,18 +79,24 @@ def load_config(path):
             cfg = yaml.safe_load(f) or {}
         except yaml.YAMLError as e:
             raise ConfigError(f'Ошибка в записи файла настроек {path}: {e}')
+    return finish_config(cfg, os.path.dirname(os.path.abspath(path)), os.path.abspath(path))
+
+
+def finish_config(cfg, base, source):
+    """Общая часть для файла настроек и анкеты ноутбука: проверка ключей, абсолютные пути
+    (относительно папки base), параметры по умолчанию, варианты, таблица групп.
+    source — откуда взяты настройки (путь к файлу или «анкета ноутбука»), для сообщений."""
     unknown = set(cfg) - _KNOWN_KEYS
     if unknown:
         raise ConfigError(f'Неизвестные разделы в настройках: {", ".join(sorted(unknown))}. '
                           f'Допустимые: {", ".join(sorted(_KNOWN_KEYS))}.')
-    base = os.path.dirname(os.path.abspath(path))
     for k in _PATH_KEYS:
         v = cfg.get(k)
         if isinstance(v, (list, tuple)):
             cfg[k] = [os.path.normpath(os.path.join(base, x)) for x in v]
         elif v:
             cfg[k] = os.path.normpath(os.path.join(base, v))
-    cfg.setdefault('name', os.path.splitext(os.path.basename(path))[0])
+    cfg.setdefault('name', os.path.splitext(os.path.basename(source))[0])
     cfg.setdefault('mode', 'layers')
     cfg['fields'] = cfg.get('fields') or {}
     cfg.setdefault('capacity_field', 'capacity')
@@ -106,8 +112,8 @@ def load_config(path):
         cfg['_groups'] = load_group_table(cfg.get('service_groups'))
     except (OSError, ValueError) as e:
         raise ConfigError(str(e))
-    cfg['_path'] = os.path.abspath(path)
+    cfg['_path'] = source
     return cfg
 
 
-__all__ = ['load_config', 'merge_params', 'ConfigError']
+__all__ = ['load_config', 'finish_config', 'merge_params', 'ConfigError']
