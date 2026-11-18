@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "name": "bus_station", "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::32636"}}, "features": [{"type": "Feature", "properties": {"name": "Гатчинамаршрутавто", "service_id": 86.0, "service_name": "Автовокзал"}, "geometry": {"type": "Point", "coordinates": [335335.6186694355, 6606463.424402506]}}]}

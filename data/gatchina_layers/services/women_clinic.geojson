@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "name": "women_clinic", "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::32636"}}, "features": [{"type": "Feature", "properties": {"service_id": 32.0, "service_name": "Женская консультация"}, "geometry": {"type": "Point", "coordinates": [335515.8931659687, 6605632.141594704]}}]}
