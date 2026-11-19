@@ -6,6 +6,8 @@
 """
 import os
 
+os.environ['MIXUSE_PROVISION'] = 'fallback'   # эталоны — с запасным расчётом школ и садов (4.7.3)
+
 import numpy as np
 import pandas as pd
 import pytest

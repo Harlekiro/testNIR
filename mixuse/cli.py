@@ -140,30 +140,13 @@ def cmd_compare(args):
     table, info, det = compare(city, T, P, SCN)
     v5 = cfg['rules'] == 'v5'
     prov_note = None
-    if v5:      # раздел 12: школы и сады через blocksnet, если он установлен и матрица есть; иначе — запасной 4.7.3
-        from .provision_bn import require_blocksnet, load_matrix, variant_provision, BlocksnetError
-        try:
-            require_blocksnet()
-            mx, _ = load_matrix(cfg, city['table']['block_id'].tolist())
-            E_ids = city['table']['block_id'].iloc[det['E']].astype(int).tolist()
-            t0 = time.time()
-            prov = variant_provision(city, mx, T, E_ids, det['values'], near=args.near)
-            _say(f'Обеспеченность через blocksnet: {time.time() - t0:.0f} с'
-                 + (f' (кварталы не дальше {args.near:g} порогов от территории, 12.4)' if args.near else ''))
+    if v5:      # раздел 12: blocksnet здесь → окружение с blocksnet → оценка → запасной 4.7.3 (bn_bridge)
+        from .bn_bridge import school_provision
+        t0 = time.time()
+        prov, prov_note = school_provision(cfg, city, T, det, near=args.near, say=_say)
+        if prov:
+            _say(f'Школы и сады: {prov.get("_source", "")} ({time.time() - t0:.0f} с)')
             table, info, det = compare(city, T, P, SCN, prov=prov)
-        except BlocksnetError as e:
-            from .provision_estimate import load_page_data, estimate_variants
-            try:
-                pdat = load_page_data(cfg, city)
-            except ValueError as e2:
-                pdat, e = None, e2
-            if pdat:                    # оценка по сохранённому точному расчёту «как есть» (без blocksnet)
-                prov = estimate_variants(pdat, det['T'], list(det['E']), det['values'], city['table']['area'].to_numpy())
-                table, info, det = compare(city, T, P, SCN, prov=prov)
-                prov_note = ('Школы и сады — оценка по сохранённому точному расчёту blocksnet «как есть»; '
-                             'точный расчёт вариантов — в окружении с blocksnet.')
-            else:
-                prov_note = f'Школы и сады — запасной расчёт 4.7.3 (раздел 12 не использован): {e}'
     warns = info.pop('предупреждения', []) if v5 else []
     if prov_note:
         warns.append(prov_note)
@@ -367,6 +350,23 @@ def cmd_page(args):
     return 0
 
 
+def cmd_provision_variants(args):
+    """Служебная: точный расчёт школ и садов по вариантам в окружении с blocksnet — по заданию от bn_bridge.delegate."""
+    import json as _json
+    from .provision_bn import load_matrix, variant_provision
+    cfg = load_config(args.config)
+    job = _json.load(open(args.job, encoding='utf-8'))
+    cfg['_path'] = os.path.join(job['access_root'], 'configs', cfg['name'] + '.yaml')   # data/<код>/access/ — от корня
+    L, city = _prepare(cfg)
+    mx, _ = load_matrix(cfg, city['table']['block_id'].tolist())
+    prov = variant_provision(city, mx, job['territory'], job['environment'], job['values'], near=job.get('near'))
+    conv = lambda v: v.item() if hasattr(v, 'item') else v
+    with open(args.out_json, 'w', encoding='utf-8') as f:
+        _json.dump({k: ({kk: {f: conv(x) for f, x in vv.items()} for kk, vv in v.items()} if isinstance(v, dict) else v)
+                    for k, v in prov.items()}, f, ensure_ascii=False)
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog='python -m mixuse', description='Сравнение сочетаний функций на территории.')
     sub = p.add_subparsers(dest='cmd', required=True, metavar='команда')
@@ -419,6 +419,9 @@ def build_parser():
     pg.add_argument('--territory', help='номера кварталов территории через запятую')
     pg.add_argument('--clip', type=float, help='только кварталы не дальше стольких метров от центра территории (большой город)')
     pg.set_defaults(fn=cmd_page)
+    pvv = sub.add_parser('provision-variants', help='служебная: точный расчёт школ и садов по вариантам (для bn_bridge)')
+    pvv.add_argument('config'); pvv.add_argument('job'); pvv.add_argument('out_json')
+    pvv.set_defaults(fn=cmd_provision_variants)
     return p
 
 

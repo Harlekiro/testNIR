@@ -7,6 +7,8 @@ spb, gatchina, vysotsk и сверяет файлы results/ с эталонам
 import json
 import os
 
+os.environ['MIXUSE_PROVISION'] = 'fallback'   # эталоны — с запасным расчётом школ и садов (4.7.3)
+
 import matplotlib
 import pandas as pd
 import pytest
