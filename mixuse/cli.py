@@ -4,6 +4,7 @@
     python -m mixuse check   configs/<код>.yaml       проверить данные, понятные сообщения об ошибках
     python -m mixuse blocks  configs/<код>.yaml       таблица кварталов (шаги 1–4)
     python -m mixuse compare configs/<код>.yaml       сравнение вариантов (шаги 5–6) + шаги 7, 7б, карта, слои
+    python -m mixuse explore configs/<код>.yaml       перебор сочетаний долей (раздел 7)
 """
 import argparse
 import os
@@ -185,6 +186,84 @@ def cmd_compare(args):
     return 0
 
 
+def _pairs(items, what):
+    """«К=20» → {'К': 20}."""
+    out = {}
+    for it in items or []:
+        for part in str(it).split(','):
+            if not part.strip():
+                continue
+            if '=' not in part:
+                raise ConfigError(f'{what}: нужен вид «группа=процент», например К=20; получено «{part}».')
+            g, v = part.split('=', 1)
+            try:
+                out[g.strip()] = int(v)
+            except ValueError:
+                raise ConfigError(f'{what}: «{v}» — не целое число процентов.')
+    return out
+
+
+def explore_settings(cfg, args):
+    """Настройки перебора (ТЗ, раздел 7): по умолчанию Ж, К, ОД, шаг 10 %, К не больше 20 %;
+    раздел explore: в файле настроек; ключи команды — поверх него."""
+    from .scenarios import EXPLORE_DEFAULTS, GROUPS
+    raw = cfg.get('explore') or {}
+    groups = list(raw.get('groups') or EXPLORE_DEFAULTS['groups'])
+    step = int(raw.get('step') or EXPLORE_DEFAULTS['step'])
+    mx = dict(EXPLORE_DEFAULTS['max'] if raw.get('max') is None else raw['max'])
+    mn = dict(raw.get('min') or {})
+    filters = list(raw.get('filters') or [])
+    if args.groups:
+        groups = [g.strip() for g in args.groups.split(',') if g.strip()]
+    if args.step:
+        step = args.step
+    mx.update(_pairs(args.max, '--max'))
+    mn.update(_pairs(args.min, '--min'))
+    filters += args.filter or []
+    bad = [g for g in groups + list(mx) + list(mn) if g not in GROUPS]
+    if bad:
+        raise ConfigError(f'Перебор: неизвестные группы {bad}; допустимо Ж, К, ОД, П.')
+    return groups, step, mx, mn, filters
+
+
+def cmd_explore(args):
+    from .scenarios import enumerate_shares, explore, apply_filters, explore_summary
+    cfg = load_config(args.config)
+    if cfg['rules'] != 'v5':
+        raise ConfigError('Перебор сочетаний считает показатели правил v5 (rules: v5).')
+    if args.territory:
+        cfg['territory'] = [int(x) for x in args.territory.split(',') if x.strip()]
+    groups, step, mx, mn, filters = explore_settings(cfg, args)
+    try:
+        combos = enumerate_shares(groups, step, mx, mn)
+    except ValueError as e:
+        raise ConfigError(str(e))
+    if not combos:
+        raise ConfigError('Перебор: при таких минимумах и максимумах нет ни одного сочетания с суммой 100 %.')
+    L, city = _prepare(cfg)
+    P, T = cfg['params'], cfg['territory']
+    table, info = explore(city, T, P, combos)
+    try:
+        shown = apply_filters(table, filters)
+    except ValueError as e:
+        raise ConfigError(str(e))
+    summary = explore_summary(table, groups)
+    out = _out_dir(cfg, args); code = cfg['name']
+    _say(f'Перебор: группы {", ".join(groups)}, шаг {step} %, максимум {mx or "—"}, минимум {mn or "—"}; '
+         f'сочетаний {len(combos)}' + (f', после фильтров {len(shown) - 1}' if filters else ''))
+    _say(f'Территория: кварталы {T}; КИТ {info["КИТ варианта"]} — {info["КИТ: откуда"]}; '
+         f'КИТ варианта / окружения: {info["КИТ варианта / окружения"]}')
+    for w in info.get('предупреждения', []):
+        _say('  ! ' + w)
+    files = [export.table_csv(shown, export.out_path(out, code, 'перебор.csv'), index=False),
+             export.table_csv(summary, export.out_path(out, code, 'перебор_сводка.csv'), index=False)]
+    with pd.option_context('display.width', 250, 'display.max_columns', 30, 'display.max_colwidth', 40):
+        _say('\nСводка (диапазон показателя и влияние долей; без оценок «лучше / хуже»):')
+        _say(summary[['показатель', 'от', 'до', 'сильнее всего зависит от доли']].to_string(index=False))
+    _say('\nСохранено:'); [_say('  ' + f) for f in files]
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog='python -m mixuse', description='Сравнение сочетаний функций на территории.')
     sub = p.add_subparsers(dest='cmd', required=True, metavar='команда')
@@ -206,6 +285,16 @@ def build_parser():
             c.add_argument('--show', help='какой вариант показать на карте')
             c.add_argument('--fast', action='store_true', help='без шагов 7 и 7б')
         c.set_defaults(fn=fn)
+    e = sub.add_parser('explore', help='перебор сочетаний долей (ТЗ, раздел 7)')
+    e.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
+    e.add_argument('--out', help='папка результатов (по умолчанию results)')
+    e.add_argument('--territory', help='номера кварталов территории через запятую')
+    e.add_argument('--groups', help='допустимые группы через запятую, по умолчанию Ж,К,ОД')
+    e.add_argument('--step', type=int, help='шаг долей, %% (по умолчанию 10)')
+    e.add_argument('--max', action='append', help='максимум доли группы, например К=20 (по умолчанию К=20)')
+    e.add_argument('--min', action='append', help='минимум доли группы, например ОД=10')
+    e.add_argument('--filter', action='append', help='условие, например "K окружения>=0.5" (можно несколько)')
+    e.set_defaults(fn=cmd_explore)
     return p
 
 
