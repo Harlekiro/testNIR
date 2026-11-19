@@ -278,11 +278,14 @@ def cmd_explore(args):
 
 
 def cmd_access(args):
-    """Этап 8.3: матрица доступности по кварталам набора (blocksnet), сохраняется в data/<код>/access/."""
+    """Этап 8.3: матрица доступности по кварталам набора (blocksnet), сохраняется в data/<код>/access/.
+    Граф — из файла региона OpenStreetMap (data/osm/*.osm.pbf, пункт 5) или с сервера Overpass."""
     from .provision_bn import build_matrix, save_matrix, check_matrix, file_sha256, BlocksnetError
     cfg = load_config(args.config)
     try:
-        mx, meta = build_matrix(cfg, graph_type=args.graph, retries=args.retries, say=_say)
+        from .provision_bn import default_osm_file
+        osm = None if args.osm_file == 'нет' else (args.osm_file or default_osm_file(cfg))
+        mx, meta = build_matrix(cfg, graph_type=args.graph, retries=args.retries, say=_say, osm_file=osm)
     except BlocksnetError as e:
         raise ConfigError(str(e))
     from .blocks import load_blocks
@@ -367,6 +370,15 @@ def cmd_provision_variants(args):
     return 0
 
 
+def cmd_osm_download(args):
+    """Пункт 5: файлы регионов OpenStreetMap в data/osm/ (с докачкой) — для графа без сервера Overpass."""
+    from .osm_files import fetch, DEFAULT
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    paths = fetch(root, args.region or DEFAULT, say=_say)
+    _say('Файлы регионов:'); [_say('  ' + p) for p in paths]
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog='python -m mixuse', description='Сравнение сочетаний функций на территории.')
     sub = p.add_subparsers(dest='cmd', required=True, metavar='команда')
@@ -406,6 +418,8 @@ def build_parser():
                     help='вид графа (по решению автора — walk, пешеходный)')
     a2.add_argument('--retries', type=int, default=4,
                     help='сколько раз пробовать скачать граф (0 — пока сервер не ответит; скачанные части сохраняются)')
+    a2.add_argument('--osm-file', help='файл региона OpenStreetMap .osm.pbf (по умолчанию — первый из data/osm/; '
+                                       '«нет» — скачивать с сервера Overpass)')
     a2.set_defaults(fn=cmd_access)
     pv = sub.add_parser('provision', help='обеспеченность школами и садами через blocksnet (раздел 12, этап 8.4)')
     pv.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
@@ -422,6 +436,9 @@ def build_parser():
     pvv = sub.add_parser('provision-variants', help='служебная: точный расчёт школ и садов по вариантам (для bn_bridge)')
     pvv.add_argument('config'); pvv.add_argument('job'); pvv.add_argument('out_json')
     pvv.set_defaults(fn=cmd_provision_variants)
+    od = sub.add_parser('osm-download', help='скачать файлы регионов OpenStreetMap в data/osm/ (граф без сервера Overpass)')
+    od.add_argument('--region', action='append', help='saint_petersburg, leningrad_oblast (по умолчанию — оба)')
+    od.set_defaults(fn=cmd_osm_download)
     return p
 
 

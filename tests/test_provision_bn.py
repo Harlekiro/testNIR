@@ -192,3 +192,42 @@ def test_estimate_vs_blocksnet(code):
                 if b['env_in'] is not None:
                     assert abs(a['env_in'] - b['env_in']) <= tol, (T_ids, scen, name, a['env_in'], b['env_in'])
                 assert a['children'] == b['children'] and a['provided'] == b['provided'], (T_ids, scen, name)
+
+
+# ---------- пункт 5: граф из файла OpenStreetMap ----------
+
+OSM_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+{nodes}
+{ways}
+</osm>"""
+
+
+def _osm_file(tmp_path):
+    """Квадрат 30,000–30,010 в. д. × 60,000–60,010 с. ш. Пути: 1 footway внутри — да; 2 motorway — нет (motor);
+    3 residential access=private — нет; 4 footway foot=no — нет; 5 footway: один узел внутри, другой снаружи — да
+    (как в Overpass: путь с узлом внутри — целиком); 6 footway снаружи — нет; 7 здание без highway — нет."""
+    pts = {1: (30.002, 60.002), 2: (30.004, 60.004), 3: (30.006, 60.006), 4: (30.008, 60.008),
+           5: (30.005, 60.005), 6: (30.050, 60.050), 7: (30.060, 60.060), 8: (30.070, 60.070)}
+    ways = {1: ([1, 2], {'highway': 'footway'}), 2: ([2, 3], {'highway': 'motorway'}),
+            3: ([3, 4], {'highway': 'residential', 'access': 'private'}), 4: ([1, 3], {'highway': 'footway', 'foot': 'no'}),
+            5: ([5, 6], {'highway': 'footway'}), 6: ([7, 8], {'highway': 'footway'}), 7: ([1, 4], {'building': 'yes'})}
+    nodes = '\n'.join(f'<node id="{i}" version="1" lat="{la}" lon="{lo}"/>' for i, (lo, la) in pts.items())
+    ws = '\n'.join(f'<way id="{i}" version="1">' + ''.join(f'<nd ref="{r}"/>' for r in refs)
+                   + ''.join(f'<tag k="{k}" v="{v}"/>' for k, v in tags.items()) + '</way>' for i, (refs, tags) in ways.items())
+    p = tmp_path / 'test.osm'
+    p.write_text(OSM_XML.format(nodes=nodes, ways=ws), encoding='utf-8')
+    return str(p)
+
+
+def test_osm_file_selection(tmp_path):
+    _need_blocksnet()
+    from shapely.geometry import box
+    resp = pb.osm_file_elements(_osm_file(tmp_path), box(30.0, 60.0, 30.01, 60.01), say=lambda *a: None)
+    ways = {e['id'] for e in resp['elements'] if e['type'] == 'way'}
+    nodes = {e['id'] for e in resp['elements'] if e['type'] == 'node'}
+    assert ways == {1, 5}
+    assert nodes == {1, 2, 5, 6}
+    # тот же файл дважды (например, город и область) — без повторов
+    resp2 = pb.osm_file_elements([_osm_file(tmp_path)] * 2, box(30.0, 60.0, 30.01, 60.01), say=lambda *a: None)
+    assert len(resp2['elements']) == len(resp['elements'])

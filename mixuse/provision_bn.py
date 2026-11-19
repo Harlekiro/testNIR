@@ -90,7 +90,7 @@ class _Peak:
             self.mem = None
 
 
-def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print):
+def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print, osm_file=None):
     """Строит граф и матрицу доступности по кварталам mixuse набора cfg. Возвращает (матрица, описание).
 
     Граф скачивается из OpenStreetMap (iduedu); публичный сервер бывает перегружен — до retries попыток
@@ -120,7 +120,17 @@ def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print):
     ox.settings.cache_folder = os.path.join(access_dir(cfg), 'osm_cache')
     with _Peak() as pg:
         attempt = 0
-        while True:                                      # retries = 0 — пробовать, пока сервер не ответит
+        if osm_file:                                     # пункт 5: граф из файла региона, без сервера Overpass
+            if graph_type != 'walk':
+                raise BlocksnetError('Из файла OpenStreetMap строится только пешеходный граф (walk).')
+            say(f'  граф из файлов OpenStreetMap: {", ".join(map(os.path.basename, osm_file if isinstance(osm_file, list) else [osm_file]))}')
+            orig = ox.graph_from_polygon
+            ox.graph_from_polygon = graph_from_osm_file(osm_file, say=say)
+            try:
+                graph = get_accessibility_graph(territory, graph_type)
+            finally:
+                ox.graph_from_polygon = orig
+        while not osm_file:                              # retries = 0 — пробовать, пока сервер не ответит
             ox.settings.overpass_url = OVERPASS_URLS[attempt % len(OVERPASS_URLS)]   # основной сервер и зеркала по очереди
             try:
                 graph = get_accessibility_graph(territory, graph_type)
@@ -161,6 +171,9 @@ def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print):
         'время в пути, мин: медиана / макс': [round(float(np.nanmedian(vals)), 1), round(float(np.nanmax(vals)), 1)],
         'пар без пути (NaN или inf)': int((~np.isfinite(vals)).sum()),
         'кварталов с некорректной геометрией (точка — по исправленному контуру)': [n_invalid, n_fixed],
+        'источник графа': 'файлы OpenStreetMap: ' + ', '.join(f'{os.path.basename(f)} ({time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(f)))})'
+                                                           for f in (osm_file if isinstance(osm_file, list) else [osm_file]))
+                          if osm_file else f'сервер Overpass ({ox.settings.overpass_url})',
     }
     return mx, meta
 
@@ -435,3 +448,101 @@ def save_page_data(cfg, city, pdat):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(dict(pdat, meta=meta), f, ensure_ascii=False, separators=(',', ':'))
     return path
+
+
+# ================================================================================================
+# ГРАФ ИЗ ФАЙЛА OPENSTREETMAP (пункт 5): вместо запроса к серверу Overpass — готовая выгрузка региона (.osm.pbf)
+# ================================================================================================
+
+def _walk_filter():
+    """Фильтр пешеходных путей osmnx ("walk") — тот же, что уходит в запрос Overpass: список условий
+    (ключ, None) — тег есть; (ключ, regex) — тега нет или значение не подходит под regex (!~ в Overpass)."""
+    import re
+    from osmnx import _overpass
+    f = _overpass._get_network_filter('walk')
+    conds = []
+    for m in re.finditer(r'\["([^"]+)"(?:!~"([^"]*)")?\]', f):
+        conds.append((m.group(1), re.compile(m.group(2)) if m.group(2) is not None else None))
+    return conds
+
+
+def _way_ok(tags, conds):
+    for k, rx in conds:
+        v = tags.get(k)
+        if rx is None:
+            if v is None:
+                return False
+        elif v is not None and rx.search(v):
+            return False
+    return True
+
+
+def osm_file_elements(pbfs, polygon, say=print):
+    """Пути и узлы из файла .osm.pbf так, как их вернул бы Overpass на запрос osmnx
+    `way[фильтр walk](poly:…); >;`: пути, у которых хотя бы один узел внутри многоугольника, и все их узлы.
+    pbfs — файл или список файлов (например, Санкт-Петербург и Ленинградская область): пути и узлы объединяются,
+    повторы (общие пути на границе файлов) убираются. Возвращает ответ в формате Overpass JSON (для osmnx _create_graph)."""
+    import osmium
+    import shapely
+    conds = _walk_filter()
+    x0, y0, x1, y1 = polygon.bounds
+    shapely.prepare(polygon)
+    ways, nodes, seen = [], {}, set()
+    t0 = time.time()
+    n = 0
+    for obj in (o for pbf in ([pbfs] if isinstance(pbfs, str) else pbfs)
+                for o in osmium.FileProcessor(pbf).with_locations().with_filter(osmium.filter.KeyFilter('highway'))):
+        if not obj.is_way() or obj.id in seen:
+            continue
+        n += 1
+        tags = {t.k: t.v for t in obj.tags}
+        if not _way_ok(tags, conds):
+            continue
+        refs, xs, ys = [], [], []
+        for nd in obj.nodes:
+            if not nd.location.valid():
+                continue
+            refs.append(nd.ref); xs.append(nd.location.lon); ys.append(nd.location.lat)
+        if not xs or max(xs) < x0 or min(xs) > x1 or max(ys) < y0 or min(ys) > y1:
+            continue
+        if not shapely.contains_xy(polygon, np.asarray(xs), np.asarray(ys)).any():
+            continue
+        seen.add(obj.id)
+        ways.append({'type': 'way', 'id': obj.id, 'nodes': refs, 'tags': tags})
+        for r, x, y in zip(refs, xs, ys):
+            nodes[r] = (y, x)
+    say(f'  файл OSM: путей с highway {n}, выбрано пешеходных {len(ways)}, узлов {len(nodes)}; {time.time() - t0:.0f} с')
+    els = [{'type': 'node', 'id': r, 'lat': la, 'lon': lo} for r, (la, lo) in nodes.items()] + ways
+    return {'elements': els}
+
+
+def graph_from_osm_file(pbf, say=print):
+    """Замена ox.graph_from_polygon для iduedu: те же шаги osmnx 2 (буфер 500 м, сборка графа, обрезка, крупнейшая
+    связная часть, упрощение), но данные — из файла .osm.pbf, а не с сервера Overpass."""
+    import networkx as nx
+    from osmnx import graph as oxg, projection, settings, simplification, stats, truncate
+
+    def graph_from_polygon(polygon, network_type='walk', truncate_by_edge=False, simplify=True, retain_all=False, **kw):
+        poly_proj, crs_utm = projection.project_geometry(polygon)
+        poly_buff, _ = projection.project_geometry(poly_proj.buffer(500), crs=crs_utm, to_latlong=True)
+        resp = osm_file_elements(pbf, poly_buff, say=say)
+        G_buff = oxg._create_graph([resp], network_type in settings.bidirectional_network_types)
+        G_buff = truncate.truncate_graph_polygon(G_buff, poly_buff, truncate_by_edge=truncate_by_edge)
+        if not retain_all:
+            G_buff = truncate.largest_component(G_buff, strongly=False)
+        if simplify:
+            G_buff = simplification.simplify_graph(G_buff)
+        G = truncate.truncate_graph_polygon(G_buff, polygon, truncate_by_edge=truncate_by_edge)
+        if not retain_all:
+            G = truncate.largest_component(G, strongly=False)
+        nx.set_node_attributes(G, values=stats.count_streets_per_node(G_buff, nodes=G.nodes), name='street_count')
+        return G
+    return graph_from_polygon
+
+
+def default_osm_file(cfg):
+    """Файлы регионов OpenStreetMap: все data/osm/*.osm.pbf (список) или None."""
+    root = os.path.dirname(os.path.dirname(cfg['_path'])) if str(cfg.get('_path', '')).endswith('.yaml') else os.getcwd()
+    d = os.path.join(root, 'data', 'osm')
+    files = sorted(f for f in os.listdir(d) if f.endswith('.osm.pbf')) if os.path.isdir(d) else []
+    return [os.path.join(d, f) for f in files] or None
