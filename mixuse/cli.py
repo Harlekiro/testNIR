@@ -7,6 +7,7 @@
     python -m mixuse explore configs/<код>.yaml       перебор сочетаний долей (раздел 7)
     python -m mixuse access  configs/<код>.yaml       матрица доступности через blocksnet (раздел 12; Python 3.11)
     python -m mixuse provision configs/<код>.yaml     обеспеченность школами и садами через blocksnet (Python 3.11)
+    python -m mixuse page    configs/<код>.yaml       файл для страницы страница/конструктор.html
 """
 import argparse
 import os
@@ -208,7 +209,7 @@ def cmd_compare(args):
               export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt'))]
     if cfg['rules'] == 'v5':
         files.append(export.buildings_csv(city, export.out_path(out, code, 'здания.csv')))
-        _say('\nФайл для страницы по правилам v5 появится на этапе 7.')
+        _say('\nФайл для страницы: python -m mixuse page ' + cfg['_path'])
     else:
         files.append(export.web_json(city, cfg, export.out_path(out, code, 'для_страницы.json')))
     _say('\nСохранено:'); [_say('  ' + f) for f in files]
@@ -342,6 +343,30 @@ def cmd_provision(args):
     return 0
 
 
+def cmd_page(args):
+    """Этап 7: файл для страницы «Конструктор смешанности» (страница/конструктор.html) по правилам v5."""
+    from .provision_estimate import load_page_data
+    cfg = load_config(args.config)
+    if cfg['rules'] != 'v5':
+        raise ConfigError('Файл для страницы правил v5: в настройках нужен rules: v5 (для v4 — команда compare).')
+    if args.territory:
+        cfg['territory'] = [int(x) for x in args.territory.split(',') if x.strip()]
+    L, city = _prepare(cfg)
+    try:
+        pdat = load_page_data(cfg, city)
+    except ValueError as e:
+        _say(f'! {e}')
+        pdat = None
+    path = args.file or export.out_path(_out_dir(cfg, args), cfg['name'], 'для_страницы.json')
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    export.web_json_v5(city, cfg, path, pdat, clip=args.clip)
+    _say('Школы и сады на странице: ' + ('оценка по точному расчёту blocksnet «как есть»' if pdat else
+         'запасной расчёт 4.7.3 (точного расчёта «как есть» нет: команда provision в окружении с blocksnet)'))
+    _say(f'Файл для страницы: {path} ({os.path.getsize(path) // 1024} КБ). Откройте страница/конструктор.html '
+         'и загрузите его кнопкой «свой файл».')
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog='python -m mixuse', description='Сравнение сочетаний функций на территории.')
     sub = p.add_subparsers(dest='cmd', required=True, metavar='команда')
@@ -387,6 +412,13 @@ def build_parser():
     pv.add_argument('--out', help='папка результатов (по умолчанию results)')
     pv.add_argument('--territory', help='номера кварталов территории через запятую')
     pv.set_defaults(fn=cmd_provision)
+    pg = sub.add_parser('page', help='файл для страницы «Конструктор смешанности» (правила v5, этап 7)')
+    pg.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
+    pg.add_argument('--out', help='папка результатов (по умолчанию results)')
+    pg.add_argument('--file', help='куда записать файл (вместо results/<код>_для_страницы.json)')
+    pg.add_argument('--territory', help='номера кварталов территории через запятую')
+    pg.add_argument('--clip', type=float, help='только кварталы не дальше стольких метров от центра территории (большой город)')
+    pg.set_defaults(fn=cmd_page)
     return p
 
 

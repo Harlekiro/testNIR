@@ -149,3 +149,60 @@ def buildings_csv(city, path):
     })
     out.to_csv(path, index=False, encoding='utf-8-sig')
     return path
+
+
+def web_json_v5(city, cfg, path, pdat=None, clip=None):
+    """Файл для страницы по правилам v5 (этап 7): формат демо-страницы автора (reference/демо_страница) —
+    кварталы с контурами в метрах и показателями, точки метро и остановок, параметры (КИТ: kit, kit_source, kit_sp_row),
+    варианты; если есть точный расчёт blocksnet «как есть» (pdat) — данные для оценки обеспеченности (provision).
+    clip — оставить кварталы, центр которых не дальше clip м от центра территории (для большого города;
+    totals — по всему набору)."""
+    from .groups import zone_group
+    from .params import SP42_B1
+    t = city['table']
+    P, rules = cfg['params'], cfg.get('zone_rules', [])
+    keep = np.arange(len(t))
+    T_ids = [int(i) for i in cfg.get('territory') or []]
+    if clip and T_ids:
+        tt = t[t['block_id'].isin(T_ids)]
+        cx, cy = tt['cx'].mean(), tt['cy'].mean()
+        keep = np.where(np.hypot(t['cx'] - cx, t['cy'] - cy) <= clip)[0]
+    new = {int(k): i for i, k in enumerate(keep)}
+    blocks = []
+    for k in keep:
+        row = t.iloc[k]
+        z = row['zone']
+        zg = zone_group(z, rules)
+        blocks.append({
+            'id': int(row['block_id']), 'z': zg if zg in ('П', 'ОД') else '',
+            'zc': '' if z is None or (isinstance(z, float) and np.isnan(z)) else str(z).replace('LandUse.', ''),
+            'a': round(float(row['area']), 1), 'cx': round(float(row['cx']), 2), 'cy': round(float(row['cy']), 2),
+            'pop': round(float(row['pop']), 2), 'j': round(float(row['jobs']), 2), 'jA': round(float(row['jobs_A']), 2),
+            'K': int(row['есть_К']), 'OD': int(row['есть_ОД']), 'P': int(row['есть_П']),
+            'sc': round(float(row['cap_school'])), 'kg': round(float(row['cap_kinder'])), 'fa': round(float(row['fa']), 1),
+            'nb': int(row['n_bld']), 'nbd': int(row['n_bld_default']),
+            'g': [[np.round(r, 2).tolist() for r in p] for p in city['polys'][k]],
+        })
+    params = {k: P.get(k) for k in ('kit', 'kit_source', 'kit_sp_row', 'R', 'r', 'q', 'k_liv', 'a_К', 'a_ОД', 'a_П',
+                                    'n_school', 'n_kinder')}
+    web = {'format': 'konstruktor-smeshannosti', 'format_version': 2, 'rules': 'v5',
+           'name': cfg.get('title') or cfg['name'], 'code': cfg['name'], 'territory': T_ids,
+           'totals': {'pop': float(t['pop'].sum()), 'jobs': float(t['jobs'].sum()), 'jobsA': float(t['jobs_A'].sum())},
+           'clip': float(clip or 0), 'params': params, 'scenarios': cfg['scenarios'],
+           'sp42': {k: [n, v] for k, (n, v) in SP42_B1.items()},
+           'blocks': blocks,
+           'pts': {'metro': np.round(city['pts']['метро'], 2).tolist(), 'stop': np.round(city['pts']['остановка'], 2).tolist()}}
+    if pdat:
+        prov = {k: pdat[k] for k in ('blocksnet', 'граф', 'max_depth') if k in pdat}
+        for key in ('school', 'kindergarten'):
+            sd = pdat[key]
+            m = lambda a: [a[k] for k in keep]
+            prov[key] = {'norm': sd['norm'], 'threshold': sd['threshold'], 'impute_capacity': sd.get('impute_capacity'),
+                         'capacity': m(sd['capacity']), 'demand': m(sd['demand']), 'within': m(sd['within']),
+                         'without': m(sd['without']), 'free': m(sd['free']),
+                         'links': [[new[a], new[b]] + l[2:] for l in sd['links'] for a, b in [l[:2]] if a in new and b in new],
+                         'pairs': [[new[a], new[b], tm] for a, b, tm in sd['pairs'] if a in new and b in new]}
+        web['provision'] = prov
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(web, f, ensure_ascii=False, separators=(',', ':'))
+    return path
