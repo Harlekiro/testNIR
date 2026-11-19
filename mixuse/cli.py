@@ -19,6 +19,7 @@ from .compare import compare, TerritoryError
 from .checks import check_config, sensitivity, builtin_sensitivity
 from . import export
 from .init_config import make_config
+from .data_report import data_report
 
 USER_ERRORS = (ConfigError, CRSError, DataError, TerritoryError, FileNotFoundError)
 
@@ -45,11 +46,14 @@ def _prepare(cfg):
 
 def _report_lines(cfg, city):
     lines = [f'Набор данных: {cfg["name"]}', f'Настройки: {cfg["_path"]}', '', 'Отчёт о подготовке данных:']
+    if cfg.get('rules') == 'v5':
+        lines.append('  правила расчёта: в настройках v5, но правила v5 вводятся на этапе 4 — пока таблица считается по v4')
     for n in city.get('crs_notes', []):
         lines.append(f'  пересчёт координат: {n}')
     for k, v in city['report'].items():
         lines.append(f'  {k}: {v}')
-    lines += ['', 'Параметры:'] + [f'  {k} = {v}' for k, v in cfg['params'].items()]
+    src = cfg.get('param_sources', {})
+    lines += ['', 'Параметры:'] + [f'  {k} = {v}' + (f'  (пользователь: {src[k]})' if k in src else '') for k, v in cfg['params'].items()]
     return lines
 
 
@@ -89,6 +93,18 @@ def cmd_check(args):
             if line == '':
                 break
             _say(line)
+        lines, dwarns = data_report(city, cfg, cfg['params'])
+        _say('\nОтчёт о данных:')
+        for line in lines:
+            _say('  ' + line if line else '')
+        if dwarns:
+            _say('\nЧто стоит дополнить в данных:')
+            for w in dwarns:
+                _say('  ! ' + w)
+        path = export.report_txt([f'Отчёт о данных: {cfg["name"]} ({cfg["_path"]})', ''] + lines + ['']
+                                 + [f'! {w}' for w in warns + dwarns],
+                                 export.out_path(_out_dir(cfg, args), cfg['name'], 'отчёт_о_данных.txt'))
+        _say(f'\nОтчёт сохранён: {path}')
     _say('\nГотово: ошибок нет.')
     return 0
 
@@ -157,7 +173,7 @@ def build_parser():
     for name, fn, hlp in [('check', cmd_check, 'проверить данные'), ('blocks', cmd_blocks, 'таблица кварталов'),
                           ('compare', cmd_compare, 'сравнить варианты для территории')]:
         c = sub.add_parser(name, help=hlp)
-        c.add_argument('config', help='файл настроек, например configs/spb.yaml')
+        c.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
         c.add_argument('--out', help='папка результатов (по умолчанию results)')
         if name == 'check':
             c.add_argument('--quick', action='store_true', help='только проверка файлов и полей, без пробного расчёта')

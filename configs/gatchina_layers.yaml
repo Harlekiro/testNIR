@@ -1,0 +1,24 @@
+# Гатчина послойно: кварталы, здания, сервисы в EPSG:32636 (UTM 36N) — data/gatchina_layers/.
+# 517 кварталов из кварталы.gpkg (поле block_id), а не 351 квартал нового файла источника (ТЗ 4.1.4).
+# Производственные сервисы — 12 предприятий по отметке автора (Яндекс Карты, 18.11.2026; ТЗ 4.1.6).
+name: gatchina_layers
+title: Гатчина
+mode: layers
+rules: v5
+blocks: ../data/gatchina_layers/кварталы.gpkg
+block_id_field: block_id
+block_zone_field: land_use  # зона квартала — поле слоя кварталов (ТЗ 4.4.1); отдельного слоя зон нет
+zone_rules:
+  - [LandUse.INDUSTRIAL, П]
+  - [LandUse.BUSINESS, ОД]
+buildings: ../data/gatchina_layers/здания.geojson
+fields:
+  footprint: footprint_area
+  is_living: is_living
+  storeys: number_of_floors
+  living_area: living_area
+  population: population
+services: ../data/gatchina_layers/services
+capacity_field: capacity
+territory: [322, 323, 377]  # утверждена автором 19.11.2026; в 322 — ЦНИИ КМ «Прометей», «Гатчинский хлеб»
+params: {}

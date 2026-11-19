@@ -1,0 +1,26 @@
+# Высоцк. Данные — examples/vysotsk/ (архив метод_сравнения_вариантов_v4.zip); все слои в градусах (EPSG:4326).
+# Настройки для правил v5; настройки ноутбука v4 — configs/legacy/vysotsk.yaml.
+name: vysotsk
+title: Высоцк
+mode: layers
+rules: v5
+blocks: ../examples/vysotsk/кварталы.geojson
+block_id_field:             # поля номера нет: номер = порядок объекта в кварталы.geojson, с 0
+buildings: ../examples/vysotsk/здания.geojson
+fields:
+  footprint: footprint_area
+  is_living: is_living
+  storeys: number_of_floors
+  living_area: living_area
+  population: population
+services:                   # две папки: один файл = один тип сервиса
+  - ../examples/vysotsk/сервисы
+  - ../examples/vysotsk/промышленность
+capacity_field: capacity
+zones: ../examples/vysotsk/зоны.geojson
+zone_field: Зона
+zone_rules:                 # ТЗ 4.4.1
+  - [Производственная, П]
+  - [Общественно-деловая, ОД]
+territory: [362, 387, 392]  # производственные кварталы у жилой застройки — пример, не утверждённый проект
+params: {}

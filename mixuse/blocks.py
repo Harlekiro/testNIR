@@ -109,7 +109,8 @@ def load_services(cfg, frame, groups):
         pts = [gg[1] if gg[0] == 'point' else (inner_point(gg[1]) if gg[0] == 'poly' else None) for gg in g]
         df['x'] = [p[0] if p is not None else np.nan for p in pts]; df['y'] = [p[1] if p is not None else np.nan for p in pts]
         df['capacity'] = pd.to_numeric(df[capf], errors='coerce') if capf and capf in df else np.nan
-        frames.append(df[['service_type', 'x', 'y', 'capacity']])
+        df['name'] = df['name'].astype(str).where(df['name'].notna(), '') if 'name' in df else ''
+        frames.append(df[['service_type', 'x', 'y', 'capacity', 'name']])
     if not frames:
         raise DataError(f'Сервисы не найдены: {cfg["services"]}')
     s = pd.concat(frames, ignore_index=True).dropna(subset=['x', 'y'])
@@ -208,6 +209,8 @@ def table_from_layers(L, cfg, P):
     bdf['living'] = truthy(bdf[f['is_living']])
     st = pd.to_numeric(bdf[f['storeys']], errors='coerce') if f.get('storeys') in bdf else pd.Series(np.nan, index=bdf.index)
     st = st.where(st > 0)
+    bdf['storeys_missing'] = st.isna()                               # для отчёта о данных (4.2.2)
+    bdf['storeys_one'] = st == 1                                      # указан 1 этаж (для отчёта о данных)
     report['зданий без этажности (принят 1 этаж)'] = int(st.isna().sum())
     st = st.fillna(P['storeys_default'])
     bdf['floor_area'] = bdf['footprint'] * st
@@ -245,6 +248,7 @@ def table_from_layers(L, cfg, P):
     bdf.loc[~bdf.living, 'living_area'] = 0
     if f.get('population') in bdf:
         pp = pd.to_numeric(bdf[f['population']], errors='coerce')
+        bdf['pop_missing'] = pp.isna() & bdf.living                 # для отчёта о данных (4.2.3)
         report['жилых домов без числа жителей (принято 0)'] = int((pp.isna() & bdf.living).sum())
         report['нежилых зданий с жителями в поле (обнулены)'] = int(((~bdf.living) & (pp.fillna(0) > 0)).sum())
         bdf['pop'] = pp.fillna(0)
@@ -287,7 +291,9 @@ def table_from_layers(L, cfg, P):
     for g, col in [('школа', 'cap_school'), ('детский_сад', 'cap_kinder')]:
         t[col] = s[(s.block >= 0) & (s.group == g)].groupby('block')['capacity'].sum().reindex(t.index).fillna(0)
     pts = {g: s.loc[s.group == g, ['x', 'y']].to_numpy() for g in ['метро', 'остановка']}
-    return finish_table(t, L, P, pts, report)
+    city = finish_table(t, L, P, pts, report)
+    city['detail'] = {'buildings': bdf, 'bpolys': bpolys, 'services': s, 'services_all': L['services']}   # здания и сервисы для отчёта о данных
+    return city
 
 
 def table_from_table(L, cfg, P, groups):
