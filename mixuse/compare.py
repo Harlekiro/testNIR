@@ -263,7 +263,7 @@ def compare_v5(city, T_ids, P, SCN, prov=None):
             'кварталов в окружении': len(E), 'жителей в окружении': int(round(popE)), 'рабочих мест в окружении': int(round(jobsE)),
             'рабочих мест в окружении, нижняя граница': int(round(jobsE_A)),
             'K_ref — рабочих мест на жителя по всем данным (справочно)': round(float(jobsA / popA), 3) if popA else None,
-            'школы и сады': ('blocksnet: competitive_provision, пешеходная матрица, нормы blocksnet (раздел 12)' if prov
+            'школы и сады': (prov.get('_source', 'blocksnet (раздел 12)') if prov
                              else 'запасной расчёт 4.7.3: места и потребность внутри окружения')}
     if len(city['pts']['метро']):
         info['до метро, м'] = int(round(dist_points_to_polys(city['pts']['метро'], Tpolys).min()))

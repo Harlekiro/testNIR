@@ -259,7 +259,8 @@ def provision(city, mx, name, population=None, capacity=None, factor=1.0, max_de
     pop = t['pop'].to_numpy() if population is None else np.asarray(population, float)
     df = pd.DataFrame({'population': pop, 'capacity': np.asarray(capacity, int)}, index=t['block_id'].astype(int).to_numpy())
     st['порог, мин'] = st['accessibility'] * factor
-    res, _ = competitive_provision(df, mx, st['порог, мин'], demand=st['demand'], max_depth=max_depth)
+    res, links = competitive_provision(df, mx, st['порог, мин'], demand=st['demand'], max_depth=max_depth)
+    st['_links'] = links
     return res, st
 
 
@@ -383,4 +384,54 @@ def variant_provision(city, mx, T_ids, E_ids, values, near=None):
         for name in SERVICES:
             v, b = out[scen][name]['env_in'], out['Как есть'][name]['env_in']
             out[scen][name]['delta'] = None if v is None or b is None else v - b
+    out['_source'] = ('blocksnet: competitive_provision, пешеходная матрица, нормы blocksnet (раздел 12)'
+                      + (f'; кварталы не дальше {near:g} порогов от территории (12.4)' if near else ''))
     return out
+
+
+# ================================================================================================
+# ДАННЫЕ ДЛЯ СТРАНИЦЫ И БЫСТРОЙ ОЦЕНКИ (пункт 4; provision_estimate)
+# ================================================================================================
+
+def page_data(city, mx):
+    """Точный расчёт blocksnet «как есть» в виде, нужном быстрой оценке (provision_estimate) и странице.
+    Номера — строки таблицы кварталов. Пары «дети → учреждение» — только к кварталам с местами и не дальше
+    двух порогов (ТЗ 12.6). Время — минуты, с точностью 0,1."""
+    t = city['table']
+    ids = t['block_id'].astype(int).to_numpy()
+    pos = {int(b): k for k, b in enumerate(ids)}
+    M = mx.loc[ids, ids].to_numpy(dtype=float)
+    out = {'blocksnet': BLOCKSNET_VERSION, 'граф': GRAPH_TYPE, 'max_depth': MAX_DEPTH}
+    for name in SERVICES:
+        res, st = provision(city, mx, name)
+        r = res.reindex(ids)
+        thr = st['accessibility']
+        links = []
+        for (src, dst), v in st['_links']['value'].items():
+            if v > 0:
+                i, j = pos[int(src)], pos[int(dst)]
+                links.append([i, j, int(v), int(M[i, j] <= thr), round(float(M[i, j]), 1)])
+        fac = np.where(r['capacity'].to_numpy() > 0)[0]
+        ii, jj = np.where(M[:, fac] <= 2 * thr)
+        pairs = [[int(i), int(fac[j]), round(float(M[i, fac[j]]), 1)] for i, j in zip(ii, jj)]
+        out[name] = {
+            'norm': st['demand'], 'threshold': thr, 'impute_capacity': st['impute_capacity'],
+            'capacity': r['capacity'].astype(int).tolist(), 'demand': r['demand'].astype(int).tolist(),
+            'within': r['demand_within'].astype(int).tolist(), 'without': r['demand_without'].astype(int).tolist(),
+            'free': r['capacity_left'].astype(int).tolist(), 'links': links, 'pairs': pairs,
+        }
+    return out
+
+
+def save_page_data(cfg, city, pdat):
+    """Сохраняет точный расчёт «как есть» для оценки и страницы: data/<код>/access/provision_<граф>.json.
+    Рядом — номера кварталов, контрольная сумма слоя кварталов и число жителей: по ним проверяется, что данные
+    подходят к таблице кварталов (provision_estimate.load_page_data)."""
+    t = city['table']
+    meta = {'block_id': t['block_id'].astype(int).tolist(), 'sha256 слоя кварталов': file_sha256(cfg['blocks']),
+            'жителей': int(round(t['pop'].sum())), 'построено': time.strftime('%Y-%m-%d %H:%M')}
+    path = os.path.join(access_dir(cfg), f'provision_{GRAPH_TYPE}.json')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(dict(pdat, meta=meta), f, ensure_ascii=False, separators=(',', ':'))
+    return path

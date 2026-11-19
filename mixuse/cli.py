@@ -151,7 +151,18 @@ def cmd_compare(args):
                  + (f' (кварталы не дальше {args.near:g} порогов от территории, 12.4)' if args.near else ''))
             table, info, det = compare(city, T, P, SCN, prov=prov)
         except BlocksnetError as e:
-            prov_note = f'Школы и сады — запасной расчёт 4.7.3 (раздел 12 не использован): {e}'
+            from .provision_estimate import load_page_data, estimate_variants
+            try:
+                pdat = load_page_data(cfg, city)
+            except ValueError as e2:
+                pdat, e = None, e2
+            if pdat:                    # оценка по сохранённому точному расчёту «как есть» (без blocksnet)
+                prov = estimate_variants(pdat, det['T'], list(det['E']), det['values'], city['table']['area'].to_numpy())
+                table, info, det = compare(city, T, P, SCN, prov=prov)
+                prov_note = ('Школы и сады — оценка по сохранённому точному расчёту blocksnet «как есть»; '
+                             'точный расчёт вариантов — в окружении с blocksnet.')
+            else:
+                prov_note = f'Школы и сады — запасной расчёт 4.7.3 (раздел 12 не использован): {e}'
     warns = info.pop('предупреждения', []) if v5 else []
     if prov_note:
         warns.append(prov_note)
@@ -319,6 +330,9 @@ def cmd_provision(args):
     _say(f'Матрица: граф {meta.get("граф")}, blocksnet {meta.get("blocksnet")}, построена {meta.get("построено")}; '
          f'соответствие кварталов проверено.')
     summary, blocks = as_is_report(cfg, city, mx, cfg['territory'])
+    from .provision_bn import page_data, save_page_data
+    pd_path = save_page_data(cfg, city, page_data(city, mx))
+    _say(f'Точный расчёт «как есть» для оценки вариантов и страницы: {pd_path}')
     out = _out_dir(cfg, args); code = cfg['name']
     files = [export.table_csv(summary, export.out_path(out, code, 'обеспеченность.csv')),
              export.table_csv(blocks, export.out_path(out, code, 'обеспеченность_кварталы.csv'), index=False)]
