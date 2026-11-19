@@ -88,9 +88,22 @@ details summary{cursor:pointer;color:var(--mut);font-size:12.5px}
   <div class="row">
     <label>КИТ варианта <select id="kitMode">
       <option value="own">своё значение (ПЗЗ, ППТ)</option>
-      <option value="env">как в окружении (по данным)</option>
+      <option value="sp">по СП 42.13330.2016, табл. Б.1</option>
+      <option value="env">как в окружении (по данным, для сравнения)</option>
       <option value="spb">1,4 — ПЗЗ СПб (справочно)</option>
     </select></label>
+    <select id="spRow" style="display:none">
+      <option value="1.2">многоквартирная многоэтажная — 1,2</option>
+      <option value="1.6">то же, реконструируемая — 1,6</option>
+      <option value="0.8" selected>многоквартирная малой и средней этажности — 0,8</option>
+      <option value="0.6">блокированная — 0,6</option>
+      <option value="0.4">одно-, двухквартирные дома — 0,4</option>
+      <option value="3.0">многофункциональная общественно-деловая — 3,0</option>
+      <option value="2.4">специализированная общественная — 2,4</option>
+      <option value="2.4p">промышленная — 2,4</option>
+      <option value="1.0">научно-производственная — 1,0</option>
+      <option value="1.8">коммунально-складская — 1,8</option>
+    </select>
     <input id="kit" type="number" step="0.1" min="0.05">
     <span id="kitSrc" class="sub"></span>
   </div>
@@ -101,7 +114,7 @@ details summary{cursor:pointer;color:var(--mut);font-size:12.5px}
     <label>Сады <input id="nk" type="number" step="5" min="1" value="60"></label>
     <button class="pri" id="run">Пересчитать</button>
   </div>
-  <div class="sub" style="margin-top:4px">Если своих значений нет: КИТ — как в окружении по данным зданий; нормы мест — 110 и 60 на 1000 жителей (значения по умолчанию, источник уточняется).</div>
+  <div class="sub" style="margin-top:4px">Если своих значений нет: КИТ — предельный коэффициент плотности застройки квартала (брутто) по СП 42.13330.2016, прил. Б (обязательное), строка — по зоне, в которую переводится территория; КИТ окружения по данным — только для сравнения; нормы мест — 110 и 60 на 1000 жителей (значения по умолчанию, источник уточняется).</div>
   <details style="margin-top:8px"><summary>Доли вариантов, % поэтажной площади (можно менять)</summary>
     <div class="tabw"><table class="shares" id="shares"></table></div>
   </details>
@@ -143,7 +156,9 @@ function compute(){
   const sum=(idx,f)=>idx.reduce((s,i)=>s+B[i][f],0);
   const kitE=sum(E,'fa')/Math.max(1,sum(E,'a'));
   const mode=$('kitMode').value;
-  if(mode==='env'){P.kit=Math.round(kitE*100)/100;$('kit').value=P.kit;$('kit').disabled=true;$('kitSrc').textContent='фактический КИТ окружения по данным зданий';}
+  $('spRow').style.display=mode==='sp'?'':'none';
+  if(mode==='sp'){P.kit=parseFloat($('spRow').value);$('kit').value=P.kit;$('kit').disabled=true;$('kitSrc').textContent=`СП 42.13330.2016, табл. Б.1 (не более); окружение по данным ${fmt(kitE,2)}`;}
+  else if(mode==='env'){P.kit=Math.round(kitE*100)/100;$('kit').value=P.kit;$('kit').disabled=true;$('kitSrc').textContent='фактический КИТ окружения по данным зданий';}
   else if(mode==='spb'){P.kit=1.4;$('kit').value=1.4;$('kit').disabled=true;$('kitSrc').textContent='ПЗЗ Санкт-Петербурга, справочно';}
   else{P.kit=+$('kit').value||1.4;$('kit').disabled=false;$('kitSrc').textContent=`КИТ окружения по данным ${fmt(kitE,2)}`;}
   const S=sum(T,'a'),F=S*P.kit,popE=sum(E,'pop'),jobsE=sum(E,'j'),jobsEA=sum(E,'jA');
@@ -179,7 +194,7 @@ function compute(){
 
 function render(){
   const {out,F,S,popE,jobsE,Kref,E,P,kitE}=last;const names=Object.keys(out);
-  $('info').innerHTML=[['Площадь территории',fmt(S/1e4,1)+' га'],['КИТ варианта / окружения',fmt(P.kit,2)+' / '+fmt(kitE,2)],['Поэтажная площадь F',fmt(F)+' м²'],['Жителей в окружении',fmt(popE)],['Рабочих мест в окружении',fmt(jobsE)],['Рабочих мест на жителя, весь набор',fmt(Kref,2)]].map(([a,b])=>`<div><b>${b}</b><span>${a}</span></div>`).join('');
+  $('info').innerHTML=[['Площадь территории',fmt(S/1e4,1)+' га'],['КИТ варианта / окружения (в '+fmt(P.kit/Math.max(kitE,0.01),1)+' раза плотнее)',fmt(P.kit,2)+' / '+fmt(kitE,2)],['Поэтажная площадь F',fmt(F)+' м²'],['Жителей в окружении',fmt(popE)],['Рабочих мест в окружении',fmt(jobsE)],['Рабочих мест на жителя, весь набор',fmt(Kref,2)]].map(([a,b])=>`<div><b>${b}</b><span>${a}</span></div>`).join('');
   const maxJ=Math.max(...names.slice(1).map(n=>out[n].Jcity)),maxN=Math.max(...names.slice(1).map(n=>out[n].N));
   const w=$('warn');
   if(maxJ>10||maxN>0.15*D.totals.pop){w.style.display='block';w.innerHTML=`Масштаб: вариант добавляет до ${fmt(maxJ,0)} % рабочих мест всего набора и до ${fmt(maxN)} жителей (во всём наборе ${fmt(D.totals.pop)}). Варианты различаются объёмом застройки сильнее, чем сочетанием функций. Проверьте КИТ или уменьшите территорию.`;}else w.style.display='none';
@@ -271,13 +286,13 @@ window.addEventListener('resize',()=>{if(B.length){fit();draw();}});
 async function load(code){
   if(!cache[code]){$('res').innerHTML='<tr><td>Загрузка данных…</td></tr>';const r=await fetch(code+'.json');cache[code]=await r.json();cache[code].blocks.forEach(prep);}
   D=cache[code];B=D.blocks;sel=new Set(D.territory);
-  $('kitMode').value=code==='spb_full'?'spb':'env';$('kit').value=D.params.kit;$('R').value=D.params.R;$('r').value=D.params.r;
+  $('kitMode').value=code==='spb_full'?'spb':'sp';$('kit').value=D.params.kit;$('R').value=D.params.R;$('r').value=D.params.r;
   fit();compute();
 }
 $('city').onchange=e=>load(e.target.value);
 $('preset').onclick=()=>{sel=new Set(D.territory);compute();};
 $('clear').onclick=()=>{sel.clear();compute();};
-$('run').onclick=compute;['kit','R','r','ns','nk','kitMode'].forEach(k=>$(k).onchange=compute);
+$('run').onclick=compute;['kit','R','r','ns','nk','kitMode','spRow'].forEach(k=>$(k).onchange=compute);
 $('showSel').onchange=draw;
 renderShares();load('spb_full');
 </script>
