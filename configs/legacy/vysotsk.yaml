@@ -3,9 +3,10 @@
 name: vysotsk
 title: Высоцк
 mode: layers
-blocks: ../examples/vysotsk/кварталы.geojson
+rules: v4                   # правила ноутбука v4: режим совместимости, эталоны tests/etalon
+blocks: ../../examples/vysotsk/кварталы.geojson
 block_id_field:             # поля номера нет: номер = порядок объекта в кварталы.geojson, с 0 (другой файл не брать)
-buildings: ../examples/vysotsk/здания.geojson
+buildings: ../../examples/vysotsk/здания.geojson
 fields:
   footprint: footprint_area
   is_living: is_living
@@ -13,10 +14,10 @@ fields:
   living_area: living_area
   population: population
 services:                   # две папки: один файл = один тип сервиса
-  - ../examples/vysotsk/сервисы
-  - ../examples/vysotsk/промышленность
+  - ../../examples/vysotsk/сервисы
+  - ../../examples/vysotsk/промышленность
 capacity_field: capacity
-zones: ../examples/vysotsk/зоны.geojson
+zones: ../../examples/vysotsk/зоны.geojson
 zone_field: Зона
 zone_rules:                 # «Производственная…» → П, «Общественно-деловая…» → ОД, остальное → X
   - [Производственная, П]

@@ -19,7 +19,8 @@ _YES = {'да', 'yes', 'true', 'вкл', '1'}
 _NO = {'нет', 'no', 'false', 'выкл', '0'}
 _KNOWN_KEYS = {'name', 'title', 'mode', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field', 'zones',
                'zone_field', 'zone_rules', 'block_zone_field', 'count_prefix', 'capacity_prefix', 'fields',
-               'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'output'}
+               'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'output', 'rules', 'param_sources'}
+RULES = ('v4', 'v5')   # правила расчёта: v4 — совместимость с ноутбуком v4; v5 — раздел 4 ТЗ (по умолчанию)
 
 
 def _yes_no(v, key):
@@ -98,9 +99,17 @@ def finish_config(cfg, base, source):
             cfg[k] = os.path.normpath(os.path.join(base, v))
     cfg.setdefault('name', os.path.splitext(os.path.basename(source))[0])
     cfg.setdefault('mode', 'layers')
+    cfg['rules'] = str(cfg.get('rules') or 'v5').strip()
+    if cfg['rules'] not in RULES:
+        raise ConfigError(f'rules: «{cfg["rules"]}» — допустимо v4 (совместимость с ноутбуком v4) или v5.')
     cfg['fields'] = cfg.get('fields') or {}
     cfg.setdefault('capacity_field', 'capacity')
     cfg['params'] = merge_params(cfg.get('params'))
+    src = cfg.get('param_sources') or {}
+    if not isinstance(src, dict) or set(src) - set(cfg['params']):
+        raise ConfigError('param_sources: источники значений параметров в виде «параметр: источник»; '
+                          f'неизвестные параметры: {", ".join(sorted(set(src) - set(cfg["params"]))) if isinstance(src, dict) else src}.')
+    cfg['param_sources'] = {k: str(v) for k, v in src.items()}
     cfg['scenarios'] = cfg.get('scenarios') or dict(SCENARIOS)
     cfg['zone_rules'] = _rules(cfg.get('zone_rules'))
     terr = cfg.get('territory') or []

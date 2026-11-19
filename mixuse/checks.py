@@ -95,6 +95,8 @@ def check_config(cfg):
                         warn.append(f'Правило зон «{prefix}… → {grp}» не подходит ни к одному коду зоны.')
                 hit = {c: next((g for pr, g in rules if c.startswith(pr)), 'X') for c in codes}
                 info.append('зона → группа нежилого здания без сервисов:\n      ' + '\n      '.join(f'{c} → {g}' for c, g in hit.items()))
+    elif mode == 'layers' and cfg.get('block_zone_field'):
+        info.append(f'зона квартала — поле «{cfg["block_zone_field"]}» слоя кварталов')
     elif mode == 'layers':
         warn.append('Слой зон не задан: нежилые здания без сервисов получат группу X.')
     # --- здания и сервисы
@@ -174,6 +176,9 @@ def check_config(cfg):
             f'{k} — {", ".join(v[:3])}{" и ещё " + str(len(v) - 3) if len(v) > 3 else ""}' for k, v in systems.items())
         if bad:
             err.append(msg + '. Программа пересчитывает только градусы и зоны UTM; остальные слои перепроецируйте в QGIS.')
+        elif cfg.get('rules', 'v5') == 'v5':
+            err.append(msg + '. По правилу 4.1.2 все слои набора должны быть в одной системе координат: '
+                       'сохраните их в QGIS в системе кварталов («Экспорт» → «Сохранить объекты как…»).')
         else:
             warn.append(msg + '. Программа сама приведёт их к системе кварталов (градусы ↔ UTM).')
     # --- параметры и территория

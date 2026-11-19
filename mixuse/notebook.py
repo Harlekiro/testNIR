@@ -30,6 +30,7 @@ def config_from_form(form, P=None, SCN=None, group_table=None, base=None):
         'name': form.get('код') or 'город',
         'title': form.get('название') or form.get('код') or 'город',
         'mode': mode,
+        'rules': 'v4',          # рабочий ноутбук считает по правилам v4; v5 — после этапа 5 (ТЗ, раздел 10)
         'blocks': q.get('файл'),
         'block_id_field': q.get('поле_номера'),
         'territory': list(form.get('территория') or []),

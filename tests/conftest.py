@@ -78,6 +78,7 @@ def make_small(folder, other_crs=UTM, territory=(10,), extra=''):
     with open(cfg, 'w', encoding='utf-8') as f:
         f.write(f"""name: small
 mode: layers
+rules: v4
 blocks: data/blocks.geojson
 block_id_field: block_id
 buildings: data/buildings.geojson

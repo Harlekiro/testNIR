@@ -24,7 +24,7 @@ CASES = ['spb', 'gatchina', 'vysotsk']
 
 
 def _load(code, **params):
-    cfg = load_config(os.path.join(ROOT, 'configs', f'{code}.yaml'))
+    cfg = load_config(os.path.join(ROOT, 'configs', 'legacy', f'{code}.yaml'))
     if not os.path.exists(cfg['blocks']):
         pytest.skip(f'нет данных примера {code}')
     cfg['params'].update(params)

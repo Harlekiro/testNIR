@@ -3,18 +3,19 @@
 name: spb
 title: Санкт-Петербург, Васильевский остров
 mode: layers
-blocks: ../examples/spb_vasilievsky/blocks.geojson
+rules: v4                   # правила ноутбука v4: режим совместимости, эталоны tests/etalon
+blocks: ../../examples/spb_vasilievsky/blocks.geojson
 block_id_field: block_id
-buildings: ../examples/spb_vasilievsky/buildings.geojson
+buildings: ../../examples/spb_vasilievsky/buildings.geojson
 fields:
   footprint: building_area
   is_living: is_living
   storeys: storeys_count
   living_area: living_area
   population: population_balanced
-services: ../examples/spb_vasilievsky/services       # папка: один файл = один тип сервиса
+services: ../../examples/spb_vasilievsky/services       # папка: один файл = один тип сервиса
 capacity_field: capacity
-zones: ../examples/spb_vasilievsky/functional_zones.geojson
+zones: ../../examples/spb_vasilievsky/functional_zones.geojson
 zone_field: functional_zone
 zone_rules:                 # нежилое здание без сервисов: зона «ТП…» → П, «ТД…» → ОД, иначе X
   - [ТП, П]
