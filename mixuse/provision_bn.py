@@ -94,25 +94,51 @@ def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print):
     Граф скачивается из OpenStreetMap (iduedu); публичный сервер бывает перегружен — до retries попыток
     с паузами 1, 2, 4 минуты."""
     v = require_blocksnet()
+    import geopandas as gpd
+    import requests
+    from shapely.geometry import MultiPoint
     from blocksnet.relations import get_accessibility_graph, calculate_accessibility_matrix
     gdf = blocks_gdf(cfg)
     utm = gdf.estimate_utm_crs()
     blocks = gdf.to_crs(utm)
-    say(f'Кварталов: {len(blocks)}; граф: {graph_type}; система координат расчёта: EPSG:{utm.to_epsg()}')
+    n_invalid = int((~blocks.is_valid).sum())
+    say(f'Кварталов: {len(blocks)} (геометрически некорректных — {n_invalid}); граф: {graph_type}; '
+        f'система координат расчёта: EPSG:{utm.to_epsg()}')
+    # Территория графа — выпуклая оболочка кварталов (так делает и blocksnet: union_all().convex_hull), но по вершинам:
+    # объединение некорректных полигонов (самопересечения) падает, а оболочка вершин — та же самая и строится всегда.
+    hull = MultiPoint([c for g in blocks.geometry for part in g.geoms for c in part.exterior.coords]).convex_hull
+    territory = gpd.GeoDataFrame(geometry=[hull], crs=blocks.crs)
+    net_errors = (requests.exceptions.RequestException, ConnectionError, TimeoutError)
+    # Большую территорию osmnx скачивает частями: квадраты ~7 × 7 км, ожидание ответа до 10 мин; каждый ответ
+    # кэшируется в data/<код>/access/osm_cache — повторная попытка продолжает с места обрыва, а не начинает заново.
+    import osmnx as ox
+    ox.settings.max_query_area_size = 50 * 1000 * 1000
+    ox.settings.requests_timeout = 600
+    ox.settings.use_cache = True
+    ox.settings.cache_folder = os.path.join(access_dir(cfg), 'osm_cache')
     with _Peak() as pg:
         for attempt in range(retries):
             try:
-                graph = get_accessibility_graph(blocks[['geometry']], graph_type)
+                graph = get_accessibility_graph(territory, graph_type)
                 break
-            except Exception as e:                       # сеть, сервер Overpass
+            except net_errors as e:                      # только сеть и сервер Overpass — повторяем
                 say(f'  граф: попытка {attempt + 1} не удалась ({type(e).__name__}: {str(e)[:150]})')
                 if attempt == retries - 1:
                     raise BlocksnetError(f'Не удалось скачать граф {graph_type} из OpenStreetMap: {e}. '
                                          'Проверьте интернет и повторите позже.')
                 time.sleep(60 * 2 ** attempt)
     say(f'  граф: узлов {graph.number_of_nodes()}, рёбер {graph.number_of_edges()}; {pg.sec:.0f} с')
+    # Точка квартала — точка на поверхности (representative_point, как в blocksnet); у некорректного контура, если
+    # точка не строится, — по исправленной копии контура (make_valid). Номера и геометрия кварталов mixuse не меняются.
+    pts, n_fixed = [], 0
+    for geom in blocks.geometry:
+        try:
+            pts.append(geom.representative_point())
+        except Exception:
+            pts.append(geom.buffer(0).representative_point() if geom.buffer(0).area > 0 else geom.centroid)
+            n_fixed += 1
     with _Peak() as pm:
-        b = blocks[['geometry']].to_crs(graph.graph['crs'])
+        b = gpd.GeoDataFrame(geometry=pts, index=blocks.index, crs=blocks.crs).to_crs(graph.graph['crs'])
         mx = calculate_accessibility_matrix(b, graph)
     say(f'  матрица {mx.shape[0]} × {mx.shape[1]}, {mx.dtypes.iloc[0]}; {pm.sec:.0f} с')
     vals = mx.to_numpy(dtype=float)
@@ -126,6 +152,7 @@ def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print):
         'память процесса, МБ': None if pm.mem is None else round(pm.mem / 2 ** 20),
         'время в пути, мин: медиана / макс': [round(float(np.nanmedian(vals)), 1), round(float(np.nanmax(vals)), 1)],
         'пар без пути (NaN или inf)': int((~np.isfinite(vals)).sum()),
+        'кварталов с некорректной геометрией (точка — по исправленному контуру)': [n_invalid, n_fixed],
     }
     return mx, meta
 
