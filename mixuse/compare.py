@@ -1,4 +1,4 @@
-"""Шаги 5–6: окружение территории и сравнение вариантов (как в листинге ноутбука v4).
+"""Шаги 5–6: окружение территории и сравнение вариантов: правила v4 (как в листинге ноутбука v4) и v5 (compare_v5).
 
 Чистые функции: на входе — таблица кварталов (результат blocks.build_table), номера кварталов
 территории, параметры и варианты; на выходе — таблица сравнения. Файлы не читаются и не пишутся.
@@ -56,21 +56,16 @@ def compare(city, T_ids, P, SCN):
     В. Школы и сады: потребность = (P_E + N) · норма / 1000; места «как есть» — в E и T, в варианте — только в E;
         обеспеченность = места / потребность; не хватает = max(0, потребность − места); с территории = N · норма / 1000.
     «Как есть»: N = P_T0, J = J_T0.
-    Правила v5 (в таблице кварталов есть jobs_A):
-        строка П — нейтральная (4.7.2): «Жители в радиусе r от производства: до / после» — сумма жителей кварталов b,
-        у которых «до» = 1, и сумма для «после» = 1;
-        нижняя граница (4.4.5, 4.8.3): K_A окружения = (J_E,A + J_A) / (P_E + N), где J_A «как есть» — категория А
-        территории, в варианте — J.
     Возвращает (таблица сравнения, сводка об окружении, данные для карты).
     """
+    if 'jobs_A' in city['table']:                      # таблица кварталов по правилам v5
+        return compare_v5(city, T_ids, P, SCN)
     t = city['table']; G = city['geom']
     T = territory_indices(t, T_ids)
     E, inT, distT = environment(city, T, P['R'])
     C = t[['cx', 'cy']].to_numpy()
     S = t.area.iloc[T].sum(); F = S * P['kit']
     popE, jobsE = t['pop'].iloc[E].sum(), t['jobs'].iloc[E].sum()
-    v5 = 'jobs_A' in t
-    jobsE_A = t['jobs_A'].iloc[E].sum() if v5 else None
     Kref = t['jobs'].sum() / t['pop'].sum()
     popA, jobsA = t['pop'].sum(), t['jobs'].sum()                    # все загруженные кварталы
     popT0, jobsT0 = t['pop'].iloc[T].sum(), t['jobs'].iloc[T].sum()  # территория в нынешнем виде
@@ -81,13 +76,11 @@ def compare(city, T_ids, P, SCN):
     for name, sh in [('Как есть', None)] + list(SCN.items()):
         if sh is None:
             N, J, d = popT0, jobsT0, None
-            J_A = t['jobs_A'].iloc[T].sum() if v5 else None
             capS = t.cap_school.iloc[list(E) + T].sum(); capK = t.cap_kinder.iloc[list(E) + T].sum()
         else:
             d = normalize(sh)
             N = F * d['Ж'] * P['k_liv'] / P['q']
             J = F * (d['К'] / P['a_К'] + d['ОД'] / P['a_ОД'] + d['П'] / P['a_П'])
-            J_A = J
             capS, capK = t.cap_school.iloc[E].sum(), t.cap_kinder.iloc[E].sum()   # существующее на территории сносится
         K = (jobsE + J) / (popE + N)
         Kall = (jobsA - jobsT0 + J) / (popA - popT0 + N)
@@ -98,10 +91,6 @@ def compare(city, T_ids, P, SCN):
                 for b, nb in near.items():
                     before = bool((nb & pres[g]).any())
                     after = bool((nb & pres[g] & ~inT).any()) or (d[g] > 0 and distT[b] <= P['r'])
-                    if v5 and g == 'П':                    # 4.7.2: жители рядом с производством до / после
-                        gain += t['pop'].iloc[b] if before else 0.0
-                        lost += t['pop'].iloc[b] if after else 0.0
-                        continue
                     if not before and after: gain += t['pop'].iloc[b]; eff[b] = eff.get(b, 0) + 1
                     if before and not after: lost += t['pop'].iloc[b]; eff[b] = eff.get(b, 0) - 1
                 acc[g] = (gain, lost)
@@ -112,12 +101,7 @@ def compare(city, T_ids, P, SCN):
             'Изменение рабочих мест к нынешним': '—' if d is None else int(round(J - jobsT0)),
             'Доля нежилых площадей, %': '' if d is None else round(100 * (1 - d['Ж'])),
             'Работа на жителя K: окружение': round(float(K), 2), 'Работа на жителя K: все данные': round(float(Kall), 2),
-            **({'Рабочие места на территории J, нижняя граница': int(round(J_A)),
-                'Работа на жителя K: окружение, нижняя граница': round(float((jobsE_A + J_A) / (popE + N)), 2)} if v5 else {}),
-            **{f'Доступ к {g}: получают / теряют, жителей': ('—' if d is None else f'+{acc[g][0]:,.0f} / −{acc[g][1]:,.0f}'.replace(',', ' '))
-               for g in (['К', 'ОД'] if v5 else FUNCS)},
-            **({'Жители в радиусе r от производства: до / после': ('—' if d is None else f'{acc["П"][0]:,.0f} / {acc["П"][1]:,.0f}'.replace(',', ' '))}
-               if v5 else {}),
+            **{f'Доступ к {g}: получают / теряют, жителей': ('—' if d is None else f'+{acc[g][0]:,.0f} / −{acc[g][1]:,.0f}'.replace(',', ' ')) for g in FUNCS},
             'Школы: ученики с территории': int(round(N * P['n_school'] / 1000)),
             'Школы: обеспеченность окружения, %': int(round(100 * capS / needS)) if needS > 0 else '',
             'Школы: не хватает мест': int(round(max(0.0, needS - capS))),
@@ -129,8 +113,206 @@ def compare(city, T_ids, P, SCN):
     info = {'кварталов на территории': len(T), 'площадь территории, га': round(float(S) / 1e4, 1), 'поэтажная площадь F, м²': int(round(F)),
             'кварталов в окружении': len(E), 'жителей в окружении': int(round(popE)), 'рабочих мест в окружении': int(round(jobsE)),
             'K_ref': round(float(Kref), 3)}
-    if v5:
-        info['рабочих мест в окружении, нижняя граница'] = int(round(jobsE_A))
     if len(city['pts']['метро']): info['до метро, м'] = int(round(dist_points_to_polys(city['pts']['метро'], Tpolys).min()))
     if len(city['pts']['остановка']): info['до остановки, м'] = int(round(dist_points_to_polys(city['pts']['остановка'], Tpolys).min()))
     return out, info, {'T': T, 'E': E, 'effect': effect}
+
+
+# ================================================================================================
+# ПРАВИЛА v5: выбор КИТ, подробная и краткая таблица, вывод (ТЗ 4.6, 4.7)
+# ================================================================================================
+
+KIT_PZZ_SPB = 1.4            # ПЗЗ Санкт-Петербурга, зоны ТСМ и ТД1-1 — только справочно (4.6.2)
+GROUP_WORDS = {'К': 'торговле и услугам', 'ОД': 'общественно-деловой функции'}
+
+
+def fmt(v, d=0):
+    """Число с пробелом между разрядами, как на странице: 12 345."""
+    return f'{v:,.{d}f}'.replace(',', ' ')
+
+
+def choose_kit(t, E, P):
+    """КИТ варианта по правилу 5.1 / 4.6.2:
+        1) значение пользователя (параметр kit);
+        2) иначе КИТ окружения по данным: КИТ_E = Σ поэтажной площади всех зданий кварталов E ÷ Σ площади кварталов E,
+           округлённо до 0,01 (как на странице);
+        3) 1,4 (ПЗЗ СПб) — только справочно; используется, лишь если окружения нет.
+    Возвращает (КИТ, откуда, КИТ_E, предупреждение или None)."""
+    area = t['area'].iloc[E].sum()
+    kitE = float(t['fa'].iloc[E].sum() / area) if len(E) and area > 0 else None
+    warn = None
+    n = t['n_bld'].iloc[E].sum() if len(E) else 0
+    if n and t['n_bld_default'].iloc[E].sum() / n > 0.5:
+        warn = (f'У {100 * t["n_bld_default"].iloc[E].sum() / n:.0f} % зданий окружения этажность не указана и принята '
+                'по умолчанию (4.2.2): КИТ окружения по данным занижен.')
+    if P.get('kit') is not None:
+        return float(P['kit']), 'пользователь', kitE, warn
+    if kitE is not None:
+        return round(kitE, 2), 'по данным: КИТ окружения', kitE, warn
+    return KIT_PZZ_SPB, 'по умолчанию: 1,4 (ПЗЗ СПб, справочно) — окружения нет', kitE, warn
+
+
+def compare_v5(city, T_ids, P, SCN):
+    """Шаги 5–6 по правилам v5. Существующая застройка территории в варианте заменяется полностью (4.6.3).
+
+        F = S_T · КИТ;  N = F · δ_Ж · k_liv ÷ q;  J = F · (δ_К ÷ a_К + δ_ОД ÷ a_ОД + δ_П ÷ a_П)        (4.6.2, 4.6.4)
+        ΔJ = J − J_T0;  K окружения = (J_E + J) ÷ (P_E + N);  нижняя граница — (J_E,A + J_A) ÷ (P_E + N);
+        K по всем данным = (ΣJobs − J_T0 + J) ÷ (ΣPop − P_T0 + N)                                        (4.7.1)
+        доступ к К и ОД — получают / теряют; П — жители в радиусе r от производства до / после           (4.7.2)
+        школы и сады (запасной расчёт 4.7.3): свободные места = max(0; места E − потребность жителей E);
+        дети без места = max(0; дети с территории − свободные места); «как есть» — обеспеченность окружения
+        (места E и T ÷ потребность (P_E + P_T0)).
+    Возвращает (подробная таблица, сводка, данные: краткая таблица, выводы, карта)."""
+    t = city['table']; G = city['geom']
+    T = territory_indices(t, T_ids)
+    E, inT, distT = environment(city, T, P['R'])
+    kit, kit_from, kitE, kit_warn = choose_kit(t, E, P)
+    C = t[['cx', 'cy']].to_numpy()
+    S = t.area.iloc[T].sum(); F = S * kit
+    popE, jobsE, jobsE_A = t['pop'].iloc[E].sum(), t['jobs'].iloc[E].sum(), t['jobs_A'].iloc[E].sum()
+    popA, jobsA = t['pop'].sum(), t['jobs'].sum()
+    popT0, jobsT0, jobsT0_A = t['pop'].iloc[T].sum(), t['jobs'].iloc[T].sum(), t['jobs_A'].iloc[T].sum()
+    pres = {g: t['есть_' + g].to_numpy() for g in FUNCS}
+    near = {b: G.dist_from_point(*C[b]) <= P['r'] for b in E if t['pop'].iloc[b] > 0}
+    Tpolys = [p for k in T for p in city['polys'][k]]
+    out, effect = {}, {}
+    for name, sh in [('Как есть', None)] + list(SCN.items()):
+        if sh is None:
+            N, J, J_A, d = popT0, jobsT0, jobsT0_A, None
+            capS = t.cap_school.iloc[list(E) + T].sum(); capK = t.cap_kinder.iloc[list(E) + T].sum()
+        else:
+            d = normalize(sh)
+            N = F * d['Ж'] * P['k_liv'] / P['q']
+            J = F * (d['К'] / P['a_К'] + d['ОД'] / P['a_ОД'] + d['П'] / P['a_П'])
+            J_A = J
+            capS, capK = t.cap_school.iloc[E].sum(), t.cap_kinder.iloc[E].sum()
+        acc, eff = {}, {}
+        if d is not None:
+            for g in FUNCS:
+                a = c = 0.0
+                for b, nb in near.items():
+                    before = bool((nb & pres[g]).any())
+                    after = bool((nb & pres[g] & ~inT).any()) or (d[g] > 0 and distT[b] <= P['r'])
+                    p = t['pop'].iloc[b]
+                    if g == 'П':
+                        a += p if before else 0.0
+                        c += p if after else 0.0
+                        continue
+                    if not before and after:
+                        a += p; eff[b] = eff.get(b, 0) + 1
+                    if before and not after:
+                        c += p; eff[b] = eff.get(b, 0) - 1
+                acc[g] = (a, c)
+        effect[name] = eff
+        nS, nK = (popE + N) * P['n_school'] / 1000, (popE + N) * P['n_kinder'] / 1000
+        freeS = max(0.0, capS - popE * P['n_school'] / 1000)
+        freeK = max(0.0, capK - popE * P['n_kinder'] / 1000)
+        out[name] = dict(N=N, J=J, J_A=J_A, d=d, dJ=None if d is None else J - jobsT0, acc=acc,
+                         K=(jobsE + J) / (popE + N), KA=(jobsE_A + J_A) / (popE + N),
+                         Kall=(jobsA - jobsT0 + J) / (popA - popT0 + N), Jcity=100 * J / jobsA if jobsA else 0.0,
+                         sT=N * P['n_school'] / 1000, kT=N * P['n_kinder'] / 1000,
+                         sP=100 * capS / nS if nS > 0 else None, kP=100 * capK / nK if nK > 0 else None,
+                         sNo=max(0.0, N * P['n_school'] / 1000 - freeS), kNo=max(0.0, N * P['n_kinder'] / 1000 - freeK))
+    names = list(out)
+    full = pd.DataFrame({n: detailed_column(out[n]) for n in names})
+    short = pd.DataFrame({n: short_column(out[n], out) for n in names})
+    concl = {n: conclusion(out[n], out['Как есть']) for n in names[1:]}
+    short.loc['Вывод'] = ['—'] + [concl[n] for n in names[1:]]
+    info = {'кварталов на территории': len(T), 'площадь территории, га': round(float(S) / 1e4, 1),
+            'КИТ варианта': kit, 'КИТ: откуда': kit_from,
+            'КИТ окружения по данным': None if kitE is None else round(kitE, 2),
+            'КИТ 1,4 (ПЗЗ СПб) — справочно': KIT_PZZ_SPB,
+            'поэтажная площадь F, м²': int(round(F)),
+            'кварталов в окружении': len(E), 'жителей в окружении': int(round(popE)), 'рабочих мест в окружении': int(round(jobsE)),
+            'рабочих мест в окружении, нижняя граница': int(round(jobsE_A)),
+            'K_ref — рабочих мест на жителя по всем данным (справочно)': round(float(jobsA / popA), 3) if popA else None}
+    if len(city['pts']['метро']):
+        info['до метро, м'] = int(round(dist_points_to_polys(city['pts']['метро'], Tpolys).min()))
+    if len(city['pts']['остановка']):
+        info['до остановки, м'] = int(round(dist_points_to_polys(city['pts']['остановка'], Tpolys).min()))
+    warns = [kit_warn] if kit_warn else []
+    maxJ = max(out[n]['Jcity'] for n in names[1:]) if len(names) > 1 else 0
+    maxN = max(out[n]['N'] for n in names[1:]) if len(names) > 1 else 0
+    if maxJ > 10 or maxN > 0.15 * popA:                    # как на демо-странице
+        warns.append(f'Масштаб: вариант добавляет до {fmt(maxJ)} % рабочих мест всего набора и до {fmt(maxN)} жителей '
+                     f'(во всём наборе {fmt(popA)}). Варианты различаются объёмом застройки сильнее, чем сочетанием функций. '
+                     'Проверьте КИТ или уменьшите территорию.')
+    info['предупреждения'] = warns
+    return full, info, {'T': T, 'E': E, 'effect': effect, 'short': short, 'conclusions': concl, 'values': out}
+
+
+def _acc(o, g):
+    return '—' if o['d'] is None else f"+{fmt(o['acc'][g][0])} / −{fmt(o['acc'][g][1])}"
+
+
+def detailed_column(o):
+    """Подробная таблица (results/<код>_сравнение_подробно.csv): строки 4.7.1–4.7.3, как на демо-странице."""
+    now = o['d'] is None
+    return {
+        'Жители на территории N': int(round(o['N'])), 'Рабочие места на территории J': int(round(o['J'])),
+        'Изменение рабочих мест к нынешним': '—' if now else int(round(o['dJ'])),
+        'Доля нежилых площадей, %': '' if now else round(100 * (1 - o['d']['Ж'])),
+        'J, % рабочих мест всего набора': round(o['Jcity'], 1),
+        'K окружения': round(float(o['K']), 2), 'K окружения, нижняя граница': round(float(o['KA']), 2),
+        'Рабочие места на территории J, нижняя граница': int(round(o['J_A'])),
+        'K по всем данным': round(float(o['Kall']), 3),
+        'Доступ к К: получают / теряют': _acc(o, 'К'), 'Доступ к ОД: получают / теряют': _acc(o, 'ОД'),
+        'Жители в радиусе r от производства: до / после': '—' if now else f"{fmt(o['acc']['П'][0])} / {fmt(o['acc']['П'][1])}",
+        'Школы: ученики с территории': int(round(o['sT'])),
+        'Школы: обеспеченность окружения, %': '' if o['sP'] is None else int(round(o['sP'])),
+        'Школы: без свободного места в окружении': '—' if now else int(round(o['sNo'])),
+        'Сады: дети с территории': int(round(o['kT'])),
+        'Сады: обеспеченность окружения, %': '' if o['kP'] is None else int(round(o['kP'])),
+        'Сады: без свободного места в окружении': '—' if now else int(round(o['kNo'])),
+    }
+
+
+def short_column(o, out):
+    """Краткая таблица 4.7.0 (основной вывод программы и страницы)."""
+    now = o['d'] is None
+    first = out[list(out)[1]] if len(out) > 1 else None
+    if now:
+        prod = fmt(first['acc']['П'][0]) if first else '—'
+        school = (f"обеспеченность {'—' if o['sP'] is None else fmt(o['sP'])} % / "
+                  f"{'—' if o['kP'] is None else fmt(o['kP'])} %")
+    else:
+        prod = fmt(o['acc']['П'][1])
+        school = f"{fmt(o['sT'])} / {fmt(o['kT'])} ({fmt(o['sNo'])} / {fmt(o['kNo'])})"
+    return {
+        'Жители на территории': fmt(o['N']),
+        'Рабочие места на территории (изменение к нынешним)':
+            fmt(o['J']) if now else f"{fmt(o['J'])} ({'+' if o['dJ'] > 0 else ''}{fmt(o['dJ'])})",
+        'Рабочих мест на жителя в окружении': f"{o['K']:.2f}",
+        'Доступ к торговле и услугам: получают / теряют, жителей': _acc(o, 'К'),
+        'Доступ к общественно-деловой функции: получают / теряют': _acc(o, 'ОД'),
+        'Жители рядом с производством': prod,
+        'Школьники / дошкольники с территории (без свободного места в окружении)': school,
+    }
+
+
+def conclusion(o, base):
+    """Вывод (4.7.0): фразы по порядку, без оценок «лучше / хуже» и без сравнения вариантов между собой."""
+    t = [f"Новых жителей — {fmt(o['N'])}, рабочих мест — {fmt(o['J'])}" if round(o['N']) > 0
+         else f"Жилья нет, рабочих мест — {fmt(o['J'])}"]
+    t.append(f"к нынешним рабочим местам {'+' if o['dJ'] >= 0 else '−'}{fmt(abs(o['dJ']))}")
+    dK = o['K'] - base['K']
+    word = 'почти без изменений' if abs(dK) < 0.03 else ('больше' if dK > 0 else 'меньше')
+    t.append(f"рабочих мест на жителя в окружении {word}: {base['K']:.2f} → {o['K']:.2f}")
+    ch = []
+    for g in ('К', 'ОД'):
+        a, c = o['acc'][g]
+        if round(a) > 0:
+            ch.append(f'доступ к {GROUP_WORDS[g]} получают жители ({fmt(a)} чел.)')
+        if round(c) > 0:
+            ch.append(f'доступ к {GROUP_WORDS[g]} теряют жители ({fmt(c)} чел.)')
+    t.append('; '.join(ch) if ch else 'доступ к торговле и общественно-деловой функции без изменений')
+    pb, pa = o['acc']['П']
+    if round(pa) < round(pb):
+        t.append(f'рядом с производством жителей меньше на {fmt(pb - pa)}')
+    elif round(pa) > round(pb):
+        t.append(f'рядом с производством жителей больше на {fmt(pa - pb)}')
+    if round(o['N']) > 0:
+        sN, kN = round(o['sNo']), round(o['kNo'])
+        t.append(f'без свободного места в окружении: школьники — {fmt(sN)}, дошкольники — {fmt(kN)}' if sN + kN > 0
+                 else 'свободных мест в школах и садах окружения хватает')
+    return '; '.join(t) + '.'

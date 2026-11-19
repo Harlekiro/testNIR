@@ -6,7 +6,7 @@ import os
 
 import yaml
 
-from .params import DEFAULTS, SCENARIOS, defaults
+from .params import DEFAULTS, SCENARIOS, SCENARIOS_V5, defaults
 from .groups import load_group_table
 
 
@@ -115,13 +115,14 @@ def finish_config(cfg, base, source):
         raise ConfigError(f'rules: «{cfg["rules"]}» — допустимо v4 (совместимость с ноутбуком v4) или v5.')
     cfg['fields'] = cfg.get('fields') or {}
     cfg.setdefault('capacity_field', 'capacity')
+    cfg['_user_params'] = sorted((cfg.get('params') or {}).keys())    # заданы пользователем (ТЗ 5.1)
     cfg['params'] = merge_params(cfg.get('params'), cfg['rules'])
     src = cfg.get('param_sources') or {}
     if not isinstance(src, dict) or set(src) - set(cfg['params']):
         raise ConfigError('param_sources: источники значений параметров в виде «параметр: источник»; '
                           f'неизвестные параметры: {", ".join(sorted(set(src) - set(cfg["params"]))) if isinstance(src, dict) else src}.')
     cfg['param_sources'] = {k: str(v) for k, v in src.items()}
-    cfg['scenarios'] = cfg.get('scenarios') or dict(SCENARIOS)
+    cfg['scenarios'] = cfg.get('scenarios') or dict(SCENARIOS_V5 if cfg['rules'] == 'v5' else SCENARIOS)
     cfg['zone_rules'] = _rules(cfg.get('zone_rules'))
     terr = cfg.get('territory') or []
     try:
@@ -137,3 +138,21 @@ def finish_config(cfg, base, source):
 
 
 __all__ = ['load_config', 'finish_config', 'merge_params', 'ConfigError']
+
+
+def param_origins(cfg, info=None):
+    """Откуда взято значение каждого параметра (ТЗ 5.1): «пользователь» (с источником из param_sources),
+    «по данным» (сейчас только КИТ — 4.6.2), «по умолчанию» (со статусом из таблицы раздела 5).
+    info — сводка compare (для КИТ, выбранного по данным). Возвращает список (параметр, значение, откуда)."""
+    from .params import PARAM_STATUS
+    user, src = set(cfg.get('_user_params', [])), cfg.get('param_sources', {})
+    rows = []
+    for k, v in cfg['params'].items():
+        if k in user:
+            how = 'пользователь' + (f': {src[k]}' if k in src else ' (источник не указан)')
+        elif k == 'kit' and info and info.get('КИТ: откуда'):
+            v, how = info['КИТ варианта'], info['КИТ: откуда']
+        else:
+            how = 'по умолчанию' + (f' — {PARAM_STATUS[k]}' if k in PARAM_STATUS else '')
+        rows.append((k, v, how))
+    return rows

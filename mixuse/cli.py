@@ -12,7 +12,7 @@ import time
 
 import pandas as pd
 
-from .config import load_config, ConfigError
+from .config import load_config, ConfigError, param_origins
 from .geometry import CRSError
 from .blocks import load_layers, build_table, DataError
 from .compare import compare, TerritoryError
@@ -44,15 +44,14 @@ def _prepare(cfg):
     return L, city
 
 
-def _report_lines(cfg, city):
+def _report_lines(cfg, city, info=None):
     lines = [f'Набор данных: {cfg["name"]}', f'Настройки: {cfg["_path"]}', '', 'Отчёт о подготовке данных:']
     lines.append(f'  правила расчёта: {cfg.get("rules", "v5")}')
     for n in city.get('crs_notes', []):
         lines.append(f'  пересчёт координат: {n}')
     for k, v in city['report'].items():
         lines.append(f'  {k}: {v}')
-    src = cfg.get('param_sources', {})
-    lines += ['', 'Параметры:'] + [f'  {k} = {v}' + (f'  (пользователь: {src[k]})' if k in src else '') for k, v in cfg['params'].items()]
+    lines += ['', 'Параметры (значение — откуда, ТЗ 5.1):'] + [f'  {k} = {v} — {how}' for k, v, how in param_origins(cfg, info)]
     return lines
 
 
@@ -135,14 +134,25 @@ def cmd_compare(args):
     P, SCN, T = cfg['params'], cfg['scenarios'], cfg['territory']
     out = _out_dir(cfg, args); code = cfg['name']
     table, info, det = compare(city, T, P, SCN)
-    lines = _report_lines(cfg, city)
+    v5 = cfg['rules'] == 'v5'
+    warns = info.pop('предупреждения', []) if v5 else []
+    lines = _report_lines(cfg, city, info)
     lines += ['', f'Территория: кварталы {T}'] + [f'  {k}: {v}' for k, v in info.items()]
+    lines += [f'  ! {w}' for w in warns]
+    if v5:
+        lines += ['', 'Вывод по вариантам (4.7.0):'] + [f'  {n}: {c}' for n, c in det['conclusions'].items()]
     for s in lines[3:]:
         _say(s)
-    files = [export.blocks_csv(city, export.out_path(out, code, 'таблица_кварталов.csv')),
-             export.table_csv(table, export.out_path(out, code, 'сравнение_вариантов.csv'))]
+    files = [export.blocks_csv(city, export.out_path(out, code, 'таблица_кварталов.csv'))]
+    if v5:      # краткая таблица 4.7.0 — основной вывод; подробная — отдельным файлом
+        files += [export.table_csv(det['short'], export.out_path(out, code, 'сравнение_вариантов.csv')),
+                  export.table_csv(table, export.out_path(out, code, 'сравнение_подробно.csv'))]
+    else:
+        files.append(export.table_csv(table, export.out_path(out, code, 'сравнение_вариантов.csv')))
     with pd.option_context('display.width', 250, 'display.max_columns', 20, 'display.max_colwidth', 40):
-        _say('\nСравнение вариантов:'); _say(table.to_string())
+        _say('\nСравнение вариантов:'); _say((det['short'].drop(index='Вывод') if v5 else table).to_string())
+        if v5:
+            _say('\nПодробно:'); _say(table.to_string())
         if not args.fast:
             stab = sensitivity(city, T, P, SCN)
             files.append(export.table_csv(stab, export.out_path(out, code, 'устойчивость.csv'), index=False))

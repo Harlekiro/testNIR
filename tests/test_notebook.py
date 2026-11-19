@@ -17,7 +17,9 @@ from test_etalon import ETALON, etalon, same_strings
 matplotlib.use('Agg')
 pytestmark = pytest.mark.filterwarnings('ignore:FigureCanvasAgg is non-interactive')   # plt.show() без экрана
 NOTEBOOK = os.path.join(ROOT, 'метод_сравнения_вариантов.ipynb')
-DATA = {'spb': 'examples/spb_vasilievsky', 'gatchina': 'examples/gatchina', 'vysotsk': 'examples/vysotsk'}
+# пример ноутбука → (код эталона, данные). Правила v4 — эталоны tests/etalon.
+DATA = {'spb': ('spb', 'examples/spb_vasilievsky'), 'gatchina': ('gatchina', 'examples/gatchina'),
+        'vysotsk_v4': ('vysotsk', 'examples/vysotsk')}
 
 
 def code_cells():
@@ -50,11 +52,12 @@ def test_notebook_cells_use_package():
 
 @pytest.fixture(scope='module', params=list(DATA))
 def ran(request, tmp_path_factory):
-    code = request.param
-    if not os.path.exists(os.path.join(ROOT, DATA[code])):
-        pytest.skip(f'нет данных примера {code}')
-    out = str(tmp_path_factory.mktemp(code))
-    run_notebook(code, out)
+    example = request.param
+    code, data = DATA[example]
+    if not os.path.exists(os.path.join(ROOT, data)):
+        pytest.skip(f'нет данных примера {example}')
+    out = str(tmp_path_factory.mktemp(example))
+    run_notebook(example, out)
     return code, out
 
 

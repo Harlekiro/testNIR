@@ -6,6 +6,7 @@
 import os
 
 from .config import finish_config
+from .params import defaults
 from .checks import check_config
 from .blocks import DataError
 
@@ -17,7 +18,19 @@ def config_from_form(form, P=None, SCN=None, group_table=None, base=None):
 
     P — параметры ноутбука, SCN — варианты, group_table — путь к таблице групп;
     base — папка, от которой считаются пути анкеты (по умолчанию — текущая, то есть папка ноутбука).
+
+    Правила расчёта — поле анкеты «правила»: 'v5' (по умолчанию) или 'v4' (режим совместимости с ноутбуком v4;
+    тогда P и SCN ноутбука не применяются — берутся параметры и варианты v4 по умолчанию).
+    Пользовательскими (ТЗ 5.1) считаются параметры, значение которых отличается от значения по умолчанию,
+    и параметры из поля анкеты «параметры»; источник значения — поле «источники».
     """
+    rules = form.get('правила', 'v5')
+    if rules == 'v4':
+        P, SCN = None, None
+    else:
+        base_P = defaults(rules)
+        P = {k: v for k, v in (P or {}).items() if k not in base_P or v != base_P[k]}
+        P.update(form.get('параметры') or {})
     q = form.get('кварталы') or {}
     b = form.get('здания') or {}
     s = form.get('сервисы') or {}
@@ -30,11 +43,12 @@ def config_from_form(form, P=None, SCN=None, group_table=None, base=None):
         'name': form.get('код') or 'город',
         'title': form.get('название') or form.get('код') or 'город',
         'mode': mode,
-        'rules': 'v4',          # рабочий ноутбук считает по правилам v4; v5 — после этапа 5 (ТЗ, раздел 10)
+        'rules': rules,
         'blocks': q.get('файл'),
         'block_id_field': q.get('поле_номера'),
         'territory': list(form.get('территория') or []),
         'params': dict(P or {}),
+        'param_sources': dict(form.get('источники') or {}),
         'service_groups': group_table,
     }
     if SCN:
@@ -50,6 +64,7 @@ def config_from_form(form, P=None, SCN=None, group_table=None, base=None):
             'capacity_field': s.get('поле_мест'),
             'zones': z.get('файл'),
             'zone_field': z.get('поле_кода'),
+            'block_zone_field': z.get('поле_в_кварталах'),   # зона — поле слоя кварталов (Гатчина), если слоя зон нет
             'zone_rules': [list(r) for r in (z.get('правила') or [])],
         })
     else:

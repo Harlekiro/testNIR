@@ -194,6 +194,20 @@ def check_config(cfg):
 # ШАГ 7. Проверка устойчивости: R = 500, 800, 1000 м; КИТ = 1,4; 2,0 (как в ноутбуке v4)
 # ================================================================================================
 
+def _k_row(city):
+    """Строка «K окружения» в таблице сравнения: v5 — «K окружения», v4 — «Работа на жителя K: окружение»."""
+    return 'K окружения' if 'jobs_A' in city['table'] else 'Работа на жителя K: окружение'
+
+
+def _school_row(city):
+    """Школы в шаге 7 (4.8.1): v5 — дети без свободного места в окружении (4.7.0); v4 — нехватка мест."""
+    return 'Школы: без свободного места в окружении' if 'jobs_A' in city['table'] else 'Школы: не хватает мест'
+
+
+def _school_label(city):
+    return 'без свободного места' if 'jobs_A' in city['table'] else 'не хватает мест'
+
+
 def sensitivity(city, T, P, SCN, Rs=(500, 800, 1000), kits=(1.4, 2.0)):
     """Шаг 7. Сравнение повторяется при других R и КИТ: K окружения «как есть», изменение K
     в каждом варианте (K варианта − K как есть) и нехватка мест в школах.
@@ -202,12 +216,12 @@ def sensitivity(city, T, P, SCN, Rs=(500, 800, 1000), kits=(1.4, 2.0)):
     for R in Rs:
         for kit in kits:
             tb, inf, _ = compare(city, T, dict(P, R=R, kit=kit), SCN)
-            k = tb.loc['Работа на жителя K: окружение'].astype(float)
-            sch = tb.loc['Школы: не хватает мест', list(SCN)]
+            k = tb.loc[_k_row(city)].astype(float)
+            sch = tb.loc[_school_row(city), list(SCN)]
             rows.append({'R, м': R, 'КИТ': kit, 'кварталов в окружении': inf['кварталов в окружении'],
                          'K окружения как есть': k['Как есть'],
                          **{f'изменение K {s.split()[0]}': round(k[s] - k['Как есть'], 2) for s in SCN},
-                         **{f'школы: не хватает мест {s.split()[0]}': sch[s] for s in SCN}})
+                         **{f'школы: {_school_label(city)} {s.split()[0]}': sch[s] for s in SCN}})
     return pd.DataFrame(rows)
 
 
@@ -231,7 +245,7 @@ def builtin_sensitivity(L, cfg, P, T, SCN, s0_values=(50, 100, 300)):
         rows.append({'расчёт': name,
                      'встроенная площадь К, м²': int(round(t2['встр_К'].sum())), 'встроенная площадь ОД, м²': int(round(t2['встр_ОД'].sum())),
                      'рабочих мест': int(round(t2['jobs'].sum())), 'K_ref': round(float(t2['jobs'].sum() / t2['pop'].sum()), 3),
-                     **{f'K окружения {s.split()[0]}': tb.loc['Работа на жителя K: окружение', s] for s in ['Как есть'] + list(SCN)}})
+                     **{f'K окружения {s.split()[0]}': tb.loc[_k_row(c2), s] for s in ['Как есть'] + list(SCN)}})
     return pd.DataFrame(rows)
 
 
@@ -250,9 +264,9 @@ def estimates_check(city, T, P, SCN):
     tb, info, _ = compare(city, T, P, SCN)
     rows = []
     for name, total, row_J, row_K in [
-            ('основная (А + Б)', t['jobs'].sum(), 'Рабочие места на территории J', 'Работа на жителя K: окружение'),
+            ('основная (А + Б)', t['jobs'].sum(), 'Рабочие места на территории J', 'K окружения'),
             ('нижняя граница (только А)', t['jobs_A'].sum(), 'Рабочие места на территории J, нижняя граница',
-             'Работа на жителя K: окружение, нижняя граница')]:
+             'K окружения, нижняя граница')]:
         rows.append({'оценка': name, 'рабочих мест всего': int(round(total)),
                      'рабочих мест на территории как есть': tb.loc[row_J, 'Как есть'], **_k_rows(tb, SCN, row_K)})
     return pd.DataFrame(rows)
@@ -283,5 +297,5 @@ def threshold_check(L, cfg, P, T, SCN, values=(500, 1000, 2000)):
         rows.append({'порог, м²': v, 'зданий шага 5': int((b.step == 5).sum()),
                      'рабочих мест шага 5': int(round(b.loc[b.step == 5, 'jobs_B'].sum())),
                      'рабочих мест всего': int(round(c2['table']['jobs'].sum())),
-                     **_k_rows(tb, SCN, 'Работа на жителя K: окружение')})
+                     **_k_rows(tb, SCN, 'K окружения')})
     return pd.DataFrame(rows)

@@ -357,6 +357,8 @@ def _finish_v5(L, cfg, P, report, blocks, s, bdf, bpolys, st, nr_idx, owner, fs,
     t['pop'] = by['pop'].sum().reindex(t.index).fillna(0)
     t['liv'] = by['living_area'].sum().reindex(t.index).fillna(0)
     t['fa'] = by['floor_area'].sum().reindex(t.index).fillna(0)
+    t['n_bld'] = by.size().reindex(t.index).fillna(0).astype(int)                       # зданий в квартале
+    t['n_bld_default'] = by['storeys_missing'].sum().reindex(t.index).fillna(0).astype(int)   # из них этажность по умолчанию
     for g in ['К', 'ОД']:
         t['встр_' + g] = by['bi_' + g].sum().reindex(t.index).fillna(0)
     for g in FUNCS:
