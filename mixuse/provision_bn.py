@@ -346,11 +346,18 @@ def _r(v):
 # ЭТАП 8.5: ОБЕСПЕЧЕННОСТЬ В ВАРИАНТАХ (ТЗ 12.4, 12.5)
 # ================================================================================================
 
-def near_blocks(mx, T_ids, minutes):
-    """Кварталы не дальше minutes от территории (по матрице, в обе стороны) — для ускорения 12.4."""
-    a = mx.loc[list(T_ids)].min(axis=0)
-    b = mx[list(T_ids)].min(axis=1)
-    return [int(i) for i in mx.index if min(a[i], b[i]) <= minutes]
+def near_blocks(mx, T_ids, minutes, reach=None):
+    """Кварталы для ускорения 12.4: не дальше minutes от территории (по матрице, в обе стороны) и, если задан reach,
+    ещё все кварталы не дальше reach от них — учреждения, куда могут ходить дети этих кварталов
+    (reach = max_depth × порог; без этого у садов с порогом 7 мин терялись сады окружения)."""
+    M = mx.to_numpy(dtype=float)
+    ids = np.asarray(mx.index)
+    pos = [int(np.where(ids == i)[0][0]) for i in T_ids]
+    d = np.minimum(M[pos, :].min(axis=0), M[:, pos].min(axis=1))
+    core = d <= minutes
+    if reach:
+        core = core | (M[core, :] <= reach).any(axis=0)
+    return [int(i) for i in ids[core]]
 
 
 def variant_provision(city, mx, T_ids, E_ids, values, near=None):
@@ -380,7 +387,7 @@ def variant_provision(city, mx, T_ids, E_ids, values, near=None):
                 cap[Tpos] = 0
             if near:
                 st = service_settings(name)
-                keep = near_blocks(mx, T_ids, near * st['accessibility'])
+                keep = near_blocks(mx, T_ids, near * st['accessibility'], reach=MAX_DEPTH * st['accessibility'])
                 sel = np.isin(ids, keep)
                 sub = mx.loc[keep, keep]
                 sub_city = {'table': t[sel].reset_index(drop=True)}
