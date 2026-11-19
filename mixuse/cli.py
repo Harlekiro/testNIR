@@ -6,6 +6,7 @@
     python -m mixuse compare configs/<код>.yaml       сравнение вариантов (шаги 5–6) + шаги 7, 7б, карта, слои
     python -m mixuse explore configs/<код>.yaml       перебор сочетаний долей (раздел 7)
     python -m mixuse access  configs/<код>.yaml       матрица доступности через blocksnet (раздел 12; Python 3.11)
+    python -m mixuse provision configs/<код>.yaml     обеспеченность школами и садами через blocksnet (Python 3.11)
 """
 import argparse
 import os
@@ -270,7 +271,7 @@ def cmd_access(args):
     from .provision_bn import build_matrix, save_matrix, check_matrix, file_sha256, BlocksnetError
     cfg = load_config(args.config)
     try:
-        mx, meta = build_matrix(cfg, graph_type=args.graph, say=_say)
+        mx, meta = build_matrix(cfg, graph_type=args.graph, retries=args.retries, say=_say)
     except BlocksnetError as e:
         raise ConfigError(str(e))
     from .blocks import load_blocks
@@ -284,6 +285,30 @@ def cmd_access(args):
         if k != 'block_id':
             _say(f'  {k}: {v}')
     _say(f'\nСохранено:\n  {pm}\n  {pj}')
+    return 0
+
+
+def cmd_provision(args):
+    """Этап 8.4: обеспеченность школами и садами «как есть» через blocksnet (раздел 12); рядом — запасной расчёт 4.7.3."""
+    from .provision_bn import load_matrix, as_is_report, BlocksnetError, require_blocksnet
+    cfg = load_config(args.config)
+    if args.territory:
+        cfg['territory'] = [int(x) for x in args.territory.split(',') if x.strip()]
+    try:
+        require_blocksnet()
+        L, city = _prepare(cfg)
+        mx, meta = load_matrix(cfg, city['table']['block_id'].tolist())
+    except BlocksnetError as e:
+        raise ConfigError(str(e))
+    _say(f'Матрица: граф {meta.get("граф")}, blocksnet {meta.get("blocksnet")}, построена {meta.get("построено")}; '
+         f'соответствие кварталов проверено.')
+    summary, blocks = as_is_report(cfg, city, mx, cfg['territory'])
+    out = _out_dir(cfg, args); code = cfg['name']
+    files = [export.table_csv(summary, export.out_path(out, code, 'обеспеченность.csv')),
+             export.table_csv(blocks, export.out_path(out, code, 'обеспеченность_кварталы.csv'), index=False)]
+    with pd.option_context('display.width', 200, 'display.max_colwidth', 70):
+        _say(f'\nОбеспеченность «как есть», территория {cfg["territory"]}:'); _say(summary.to_string())
+    _say('\nСохранено:'); [_say('  ' + f) for f in files]
     return 0
 
 
@@ -322,7 +347,14 @@ def build_parser():
     a2.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
     a2.add_argument('--graph', default='walk', choices=['walk', 'drive', 'intermodal'],
                     help='вид графа (по решению автора — walk, пешеходный)')
+    a2.add_argument('--retries', type=int, default=4,
+                    help='сколько раз пробовать скачать граф (0 — пока сервер не ответит; скачанные части сохраняются)')
     a2.set_defaults(fn=cmd_access)
+    pv = sub.add_parser('provision', help='обеспеченность школами и садами через blocksnet (раздел 12, этап 8.4)')
+    pv.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
+    pv.add_argument('--out', help='папка результатов (по умолчанию results)')
+    pv.add_argument('--territory', help='номера кварталов территории через запятую')
+    pv.set_defaults(fn=cmd_provision)
     return p
 
 

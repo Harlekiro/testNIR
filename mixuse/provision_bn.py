@@ -22,6 +22,8 @@ import pandas as pd
 
 BLOCKSNET_VERSION = '1.0.0.dev1'      # закреплено в pyproject.toml (ТЗ 12.3)
 GRAPH_TYPE = 'walk'                   # решение автора 19.11.2026: пешеходный граф для школ и садов
+# Серверы Overpass для скачивания графа (по очереди при сбоях): основной и общедоступные зеркала
+OVERPASS_URLS = ['https://overpass-api.de/api', 'https://overpass.kumi.systems/api', 'https://overpass.private.coffee/api']
 
 
 class BlocksnetError(RuntimeError):
@@ -117,16 +119,22 @@ def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print):
     ox.settings.use_cache = True
     ox.settings.cache_folder = os.path.join(access_dir(cfg), 'osm_cache')
     with _Peak() as pg:
-        for attempt in range(retries):
+        attempt = 0
+        while True:                                      # retries = 0 — пробовать, пока сервер не ответит
+            ox.settings.overpass_url = OVERPASS_URLS[attempt % len(OVERPASS_URLS)]   # основной сервер и зеркала по очереди
             try:
                 graph = get_accessibility_graph(territory, graph_type)
                 break
             except net_errors as e:                      # только сеть и сервер Overpass — повторяем
-                say(f'  граф: попытка {attempt + 1} не удалась ({type(e).__name__}: {str(e)[:150]})')
-                if attempt == retries - 1:
+                attempt += 1
+                cached = len(os.listdir(ox.settings.cache_folder)) if os.path.isdir(ox.settings.cache_folder) else 0
+                wait = min(120 * 2 ** (attempt - 1), 1800)
+                say(f'  граф: попытка {attempt} ({ox.settings.overpass_url}) не удалась ({type(e).__name__}: {str(e)[:100]}); '
+                    f'сохранено частей: {cached}; {time.strftime("%H:%M")}, следующая через {wait // 60} мин')
+                if retries and attempt >= retries:
                     raise BlocksnetError(f'Не удалось скачать граф {graph_type} из OpenStreetMap: {e}. '
-                                         'Проверьте интернет и повторите позже.')
-                time.sleep(60 * 2 ** attempt)
+                                         'Проверьте интернет и повторите позже: скачанные части сохранены.')
+                time.sleep(wait)
     say(f'  граф: узлов {graph.number_of_nodes()}, рёбер {graph.number_of_edges()}; {pg.sec:.0f} с')
     # Точка квартала — точка на поверхности (representative_point, как в blocksnet); у некорректного контура, если
     # точка не строится, — по исправленной копии контура (make_valid). Номера и геометрия кварталов mixuse не меняются.
@@ -199,3 +207,122 @@ def load_matrix(cfg, block_ids, graph_type=GRAPH_TYPE):
         raise BlocksnetError('Матрица доступности не подходит к кварталам набора: ' + '; '.join(errs) +
                              f'. Постройте заново: python -m mixuse access {cfg["_path"]}')
     return mx, meta
+
+
+# ================================================================================================
+# ЭТАП 8.4: ОБЕСПЕЧЕННОСТЬ «КАК ЕСТЬ» (ТЗ 12.2, 12.4, 12.8)
+# ================================================================================================
+
+MAX_DEPTH = 2          # решение автора 19.11.2026: искать место до двойного порога («получили место вообще»)
+# тип blocksnet → (группа таблицы групп, столбец мест в таблице кварталов, подпись)
+SERVICES = {'school': ('школа', 'cap_school', 'Школы'), 'kindergarten': ('детский_сад', 'cap_kinder', 'Сады')}
+
+
+def service_settings(name):
+    """Нормы из настроек blocksnet (решение автора 19.11.2026): мест на 1000 жителей, порог доступности (мин) и
+    вместимость для учреждений без числа мест — наименьшая из каталога blocksnet (как impute_services)."""
+    require_blocksnet()
+    from blocksnet.config import service_types_config as c
+    units = c.units
+    return {'demand': int(c[name]['demand']), 'accessibility': float(c[name]['accessibility']),
+            'impute_capacity': int(units[units.service_type == name].capacity.min())}
+
+
+def block_capacity(city, group, impute):
+    """Места по кварталам (в порядке таблицы кварталов): сумма мест учреждений квартала; у учреждения без числа мест —
+    impute мест (ТЗ 8.2, решение автора). Возвращает (места, число учреждений с подставленной вместимостью)."""
+    t = city['table']
+    s = city['detail']['services']
+    sel = (s['block'] >= 0) & (s['group'] == group)
+    cap = s.loc[sel, 'capacity']
+    n_imp = int(cap.isna().sum())
+    per = cap.fillna(impute).groupby(s.loc[sel, 'block']).sum()
+    return per.reindex(range(len(t))).fillna(0).round().astype(int).to_numpy(), n_imp
+
+
+def provision(city, mx, name, population=None, capacity=None, factor=1.0, max_depth=MAX_DEPTH):
+    """Обеспеченность одним типом учреждений по всему набору — competitive_provision blocksnet без изменений (12.2).
+
+    population, capacity — по кварталам в порядке таблицы (по умолчанию — жители и места «как есть»);
+    factor — множитель порога доступности (проверка 12.8: 0,5 / 1 / 1,5).
+    Возвращает (таблица по кварталам blocksnet с индексом block_id, настройки)."""
+    require_blocksnet()
+    from loguru import logger
+    from blocksnet.config import log_config
+    from blocksnet.analysis.provision import competitive_provision
+    logger.remove(); log_config.set_disable_tqdm(True)
+    st = service_settings(name)
+    t = city['table']
+    group, col, _ = SERVICES[name]
+    if capacity is None:
+        capacity, st['учреждений без мест (подставлено)'] = block_capacity(city, group, st['impute_capacity'])
+    pop = t['pop'].to_numpy() if population is None else np.asarray(population, float)
+    df = pd.DataFrame({'population': pop, 'capacity': np.asarray(capacity, int)}, index=t['block_id'].astype(int).to_numpy())
+    st['порог, мин'] = st['accessibility'] * factor
+    res, _ = competitive_provision(df, mx, st['порог, мин'], demand=st['demand'], max_depth=max_depth)
+    return res, st
+
+
+def provision_share(res, ids=None):
+    """Обеспеченность группы кварталов (12.2, п. 5): в пределах доступности = обеспеченный в пределах порога спрос ÷
+    весь спрос; «получили место вообще» — то же с местами за порогом (до max_depth × порога). В процентах."""
+    r = res if ids is None else res.loc[list(ids)]
+    d = r['demand'].sum()
+    if d <= 0:
+        return None, None, 0
+    return 100 * r['demand_within'].sum() / d, 100 * (r['demand_within'].sum() + r['demand_without'].sum()) / d, int(d)
+
+
+def as_is_report(cfg, city, mx, T_ids, R=None, factors=(0.5, 1.0, 1.5)):
+    """Отчёт 8.4: обеспеченность «как есть» — весь набор и окружение территории; запасной расчёт 4.7.3 рядом (12.8);
+    проверка «не больше min(100 %; места ÷ спрос)»; чувствительность к порогу × 0,5 / 1 / 1,5.
+    Возвращает (сводная таблица, таблица по кварталам)."""
+    from .compare import territory_indices, environment
+    t = city['table']; P = cfg['params']
+    T = territory_indices(t, T_ids)
+    E, _, _ = environment(city, T, P['R'] if R is None else R)
+    E_ids = t['block_id'].iloc[E].astype(int).tolist()
+    rows, per_block = [], pd.DataFrame({'block_id': t['block_id'].astype(int).to_numpy()})
+    for name, (group, col, label) in SERVICES.items():
+        res, st = provision(city, mx, name)
+        cap_all = int(res['capacity'].sum())
+        all_in, all_any, dem_all = provision_share(res)
+        env_in, env_any, dem_env = provision_share(res, E_ids)
+        popE = t['pop'].iloc[E].sum(); popT = t['pop'].iloc[T].sum()
+        capET = t[col].iloc[list(E) + T].sum()
+        fb = {}
+        for norm_name, n in [('нормы ТЗ', P['n_school'] if name == 'school' else P['n_kinder']),
+                             ('нормы blocksnet', st['demand'])]:
+            need = (popE + popT) * n / 1000
+            fb[norm_name] = 100 * capET / need if need > 0 else None
+        limit = min(100.0, 100 * cap_all / dem_all) if dem_all else None
+        sens = {}
+        for f in factors:
+            r2, _ = provision(city, mx, name, factor=f) if f != 1.0 else (res, st)
+            sens[f] = provision_share(r2, E_ids)[0]
+        rows.append({
+            'учреждения': label, 'мест на 1000 жителей': st['demand'], 'порог, мин': st['accessibility'],
+            'граф': GRAPH_TYPE, 'max_depth': MAX_DEPTH,
+            'учреждений без мест (подставлено мест)': f"{st['учреждений без мест (подставлено)']} ({st['impute_capacity']})",
+            'мест всего': cap_all, 'спрос всего': dem_all,
+            'весь набор: в пределах доступности, %': _r(all_in), 'весь набор: получили место вообще, %': _r(all_any),
+            'проверка 12.8: не больше min(100 %; места ÷ спрос), %': _r(limit),
+            'окружение: спрос': dem_env,
+            'окружение: в пределах доступности, %': _r(env_in), 'окружение: получили место вообще, %': _r(env_any),
+            'запасной расчёт 4.7.3 (окружение и территория), нормы ТЗ, %': _r(fb['нормы ТЗ']),
+            'запасной расчёт 4.7.3, нормы blocksnet, %': _r(fb['нормы blocksnet']),
+            **{f'окружение: в пределах, порог × {f:g}, %'.replace('.', ','): _r(v) for f, v in sens.items()},
+        })
+        assert all_in is None or all_in <= limit + 1e-6, f'{label}: обеспеченность выше предела 12.8'
+        r = res.reindex(per_block['block_id'])
+        per_block[f'{label}: спрос'] = r['demand'].to_numpy()
+        per_block[f'{label}: мест'] = r['capacity'].to_numpy()
+        per_block[f'{label}: в пределах, %'] = np.round(100 * r['provision_strong'].to_numpy(dtype=float), 1)
+        per_block[f'{label}: вообще, %'] = np.round(100 * r['provision_weak'].to_numpy(dtype=float), 1)
+    per_block['окружение'] = per_block['block_id'].isin(E_ids)
+    per_block['территория'] = per_block['block_id'].isin([int(i) for i in T_ids])
+    return pd.DataFrame(rows).set_index('учреждения').T, per_block
+
+
+def _r(v):
+    return None if v is None else round(float(v), 1)
