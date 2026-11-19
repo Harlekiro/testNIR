@@ -396,7 +396,7 @@ def variant_provision(city, mx, T_ids, E_ids, values, near=None):
 def page_data(city, mx):
     """Точный расчёт blocksnet «как есть» в виде, нужном быстрой оценке (provision_estimate) и странице.
     Номера — строки таблицы кварталов. Пары «дети → учреждение» — только к кварталам с местами и не дальше
-    двух порогов (ТЗ 12.6). Время — минуты, с точностью 0,1."""
+    двух порогов (ТЗ 12.6). Время — минуты, с точностью 0,0001 (грубее нельзя: пары у порога меняют сторону)."""
     t = city['table']
     ids = t['block_id'].astype(int).to_numpy()
     pos = {int(b): k for k, b in enumerate(ids)}
@@ -410,10 +410,10 @@ def page_data(city, mx):
         for (src, dst), v in st['_links']['value'].items():
             if v > 0:
                 i, j = pos[int(src)], pos[int(dst)]
-                links.append([i, j, int(v), int(M[i, j] <= thr), round(float(M[i, j]), 1)])
+                links.append([i, j, int(v), int(M[i, j] <= thr), round(float(M[i, j]), 4)])
         fac = np.where(r['capacity'].to_numpy() > 0)[0]
         ii, jj = np.where(M[:, fac] <= 2 * thr)
-        pairs = [[int(i), int(fac[j]), round(float(M[i, fac[j]]), 1)] for i, j in zip(ii, jj)]
+        pairs = [[int(i), int(fac[j]), round(float(M[i, fac[j]]), 4)] for i, j in zip(ii, jj)]
         out[name] = {
             'norm': st['demand'], 'threshold': thr, 'impute_capacity': st['impute_capacity'],
             'capacity': r['capacity'].astype(int).tolist(), 'demand': r['demand'].astype(int).tolist(),
