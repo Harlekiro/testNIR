@@ -41,7 +41,7 @@ def environment(city, T, R):
     return E, inT, distT
 
 
-def compare(city, T_ids, P, SCN):
+def compare(city, T_ids, P, SCN, prov=None):
     """Шаги 5–6. Окружение и сравнение вариантов.
 
     Для варианта с долями d (нормированы к 1), существующая застройка территории заменяется полностью:
@@ -59,7 +59,7 @@ def compare(city, T_ids, P, SCN):
     Возвращает (таблица сравнения, сводка об окружении, данные для карты).
     """
     if 'jobs_A' in city['table']:                      # таблица кварталов по правилам v5
-        return compare_v5(city, T_ids, P, SCN)
+        return compare_v5(city, T_ids, P, SCN, prov)
     t = city['table']; G = city['geom']
     T = territory_indices(t, T_ids)
     E, inT, distT = environment(city, T, P['R'])
@@ -181,7 +181,7 @@ def kit_line(kit, kitE):
     return f'{kit:.2f} / {kitE:.2f} ({how})'.replace('.', ',')
 
 
-def compare_v5(city, T_ids, P, SCN):
+def compare_v5(city, T_ids, P, SCN, prov=None):
     """Шаги 5–6 по правилам v5. Существующая застройка территории в варианте заменяется полностью (4.6.3).
 
         F = S_T · КИТ;  N = F · δ_Ж · k_liv ÷ q;  J = F · (δ_К ÷ a_К + δ_ОД ÷ a_ОД + δ_П ÷ a_П)        (4.6.2, 4.6.4)
@@ -191,6 +191,9 @@ def compare_v5(city, T_ids, P, SCN):
         школы и сады (запасной расчёт 4.7.3): свободные места = max(0; места E − потребность жителей E);
         дети без места = max(0; дети с территории − свободные места); «как есть» — обеспеченность окружения
         (места E и T ÷ потребность (P_E + P_T0)).
+    prov — обеспеченность через blocksnet по вариантам (provision_bn.variant_provision, раздел 12): если задана,
+    строки школ и садов — 12.5 (обеспеченность окружения в пределах доступности, дети с территории, из них обеспечены,
+    изменение обеспеченности окружения, получили место вообще); без неё — запасной расчёт 4.7.3.
     Возвращает (подробная таблица, сводка, данные: краткая таблица, выводы, карта)."""
     t = city['table']; G = city['geom']
     T = territory_indices(t, T_ids)
@@ -243,6 +246,11 @@ def compare_v5(city, T_ids, P, SCN):
                          sP=100 * capS / nS if nS > 0 else None, kP=100 * capK / nK if nK > 0 else None,
                          sNo=max(0.0, N * P['n_school'] / 1000 - freeS), kNo=max(0.0, N * P['n_kinder'] / 1000 - freeK))
     names = list(out)
+    if prov:                                   # 12.5: школы и сады — blocksnet; дети без места = дети − из них обеспечены
+        for n in names:
+            s_, k_ = prov[n]['school'], prov[n]['kindergarten']
+            out[n].update(prov=prov[n], sP=s_['env_in'], kP=k_['env_in'], sT=s_['children'], kT=k_['children'],
+                          sNo=s_['children'] - s_['provided'], kNo=k_['children'] - k_['provided'])
     full = pd.DataFrame({n: detailed_column(out[n]) for n in names})
     short = pd.DataFrame({n: short_column(out[n], out) for n in names})
     concl = {n: conclusion(out[n], out['Как есть']) for n in names[1:]}
@@ -254,7 +262,9 @@ def compare_v5(city, T_ids, P, SCN):
             'поэтажная площадь F, м²': int(round(F)),
             'кварталов в окружении': len(E), 'жителей в окружении': int(round(popE)), 'рабочих мест в окружении': int(round(jobsE)),
             'рабочих мест в окружении, нижняя граница': int(round(jobsE_A)),
-            'K_ref — рабочих мест на жителя по всем данным (справочно)': round(float(jobsA / popA), 3) if popA else None}
+            'K_ref — рабочих мест на жителя по всем данным (справочно)': round(float(jobsA / popA), 3) if popA else None,
+            'школы и сады': ('blocksnet: competitive_provision, пешеходная матрица, нормы blocksnet (раздел 12)' if prov
+                             else 'запасной расчёт 4.7.3: места и потребность внутри окружения')}
     if len(city['pts']['метро']):
         info['до метро, м'] = int(round(dist_points_to_polys(city['pts']['метро'], Tpolys).min()))
     if len(city['pts']['остановка']):
@@ -287,13 +297,32 @@ def detailed_column(o):
         'K по всем данным': round(float(o['Kall']), 3),
         'Доступ к К: получают / теряют': _acc(o, 'К'), 'Доступ к ОД: получают / теряют': _acc(o, 'ОД'),
         'Жители в радиусе r от производства: до / после': '—' if now else f"{fmt(o['acc']['П'][0])} / {fmt(o['acc']['П'][1])}",
-        'Школы: ученики с территории': int(round(o['sT'])),
-        'Школы: обеспеченность окружения, %': '' if o['sP'] is None else int(round(o['sP'])),
-        'Школы: без свободного места в окружении': '—' if now else int(round(o['sNo'])),
-        'Сады: дети с территории': int(round(o['kT'])),
-        'Сады: обеспеченность окружения, %': '' if o['kP'] is None else int(round(o['kP'])),
-        'Сады: без свободного места в окружении': '—' if now else int(round(o['kNo'])),
+        **(provision_rows(o) if o.get('prov') else {
+            'Школы: ученики с территории': int(round(o['sT'])),
+            'Школы: обеспеченность окружения, %': '' if o['sP'] is None else int(round(o['sP'])),
+            'Школы: без свободного места в окружении': '—' if now else int(round(o['sNo'])),
+            'Сады: дети с территории': int(round(o['kT'])),
+            'Сады: обеспеченность окружения, %': '' if o['kP'] is None else int(round(o['kP'])),
+            'Сады: без свободного места в окружении': '—' if now else int(round(o['kNo'])),
+        }),
     }
+
+
+def provision_rows(o):
+    """Строки 12.5 (заменяют строки 4.7.3), если обеспеченность посчитана через blocksnet."""
+    now = o['d'] is None
+    rows = {}
+    for key, label in [('school', 'Школы'), ('kindergarten', 'Сады')]:
+        v = o['prov'][key]
+        r1 = lambda x: '' if x is None else round(float(x), 1)
+        rows.update({
+            f'{label}: обеспеченность окружения в пределах доступности, %': r1(v['env_in']),
+            f'{label}: дети с территории': '—' if now else v['children'],
+            f'{label}: из них обеспечены в пределах доступности': '—' if now else v['provided'],
+            f'{label}: изменение обеспеченности окружения, п. п.': '—' if now else r1(v['delta']),
+            f'{label}: получили место вообще (в том числе дальше порога), %': r1(v['env_any']),
+        })
+    return rows
 
 
 def short_column(o, out):

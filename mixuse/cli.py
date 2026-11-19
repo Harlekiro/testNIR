@@ -138,7 +138,23 @@ def cmd_compare(args):
     out = _out_dir(cfg, args); code = cfg['name']
     table, info, det = compare(city, T, P, SCN)
     v5 = cfg['rules'] == 'v5'
+    prov_note = None
+    if v5:      # раздел 12: школы и сады через blocksnet, если он установлен и матрица есть; иначе — запасной 4.7.3
+        from .provision_bn import require_blocksnet, load_matrix, variant_provision, BlocksnetError
+        try:
+            require_blocksnet()
+            mx, _ = load_matrix(cfg, city['table']['block_id'].tolist())
+            E_ids = city['table']['block_id'].iloc[det['E']].astype(int).tolist()
+            t0 = time.time()
+            prov = variant_provision(city, mx, T, E_ids, det['values'], near=args.near)
+            _say(f'Обеспеченность через blocksnet: {time.time() - t0:.0f} с'
+                 + (f' (кварталы не дальше {args.near:g} порогов от территории, 12.4)' if args.near else ''))
+            table, info, det = compare(city, T, P, SCN, prov=prov)
+        except BlocksnetError as e:
+            prov_note = f'Школы и сады — запасной расчёт 4.7.3 (раздел 12 не использован): {e}'
     warns = info.pop('предупреждения', []) if v5 else []
+    if prov_note:
+        warns.append(prov_note)
     lines = _report_lines(cfg, city, info)
     lines += ['', f'Территория: кварталы {T}'] + [f'  {k}: {v}' for k, v in info.items()]
     lines += [f'  ! {w}' for w in warns]
@@ -332,6 +348,8 @@ def build_parser():
             c.add_argument('--territory', help='номера кварталов территории через запятую (вместо territory: в настройках)')
             c.add_argument('--show', help='какой вариант показать на карте')
             c.add_argument('--fast', action='store_true', help='без шагов 7 и 7б')
+            c.add_argument('--near', type=float, help='обеспеченность blocksnet — только по кварталам не дальше стольких '
+                                                     'порогов доступности от территории (ускорение 12.4, например 3)')
         c.set_defaults(fn=fn)
     e = sub.add_parser('explore', help='перебор сочетаний долей (ТЗ, раздел 7)')
     e.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')

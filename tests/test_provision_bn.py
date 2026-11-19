@@ -102,3 +102,56 @@ def test_vysotsk_as_is():
     assert (k['окружение: в пределах доступности, %'], k['окружение: получили место вообще, %']) == (69.0, 100.0)
     for c in (s, k):                                         # 12.8: не больше min(100 %; места ÷ спрос)
         assert c['весь набор: в пределах доступности, %'] <= c['проверка 12.8: не больше min(100 %; места ÷ спрос), %']
+
+
+# ---------- этап 8.5: варианты (12.4, 12.5) ----------
+
+def _city_mx(code):
+    from mixuse.blocks import load_layers, build_table
+    cfg = load_config(os.path.join(ROOT, 'configs', f'{code}.yaml'))
+    if not os.path.exists(cfg['blocks']) or not os.path.exists(pb.matrix_paths(cfg)[0]):
+        pytest.skip(f'нет данных или матрицы {code}')
+    city = build_table(load_layers(cfg, cfg['_groups']), cfg, cfg['params'], cfg['_groups'])
+    mx, _ = pb.load_matrix(cfg, city['table']['block_id'].tolist())
+    return cfg, city, mx
+
+
+@pytest.mark.parametrize('code', ['vysotsk', 'gatchina_layers'])
+def test_restricted_equals_full_within_half_pp(code):
+    """12.4: расчёт по кварталам не дальше 3 порогов от территории отличается от расчёта по всему набору
+    не больше чем на 0,5 п. п. (обеспеченность окружения, все варианты, школы и сады)."""
+    _need_blocksnet()
+    from mixuse.compare import compare
+    cfg, city, mx = _city_mx(code)
+    t = city['table']
+    _, _, det = compare(city, cfg['territory'], cfg['params'], cfg['scenarios'])
+    E_ids = t['block_id'].iloc[det['E']].astype(int).tolist()
+    full = pb.variant_provision(city, mx, cfg['territory'], E_ids, det['values'])
+    near = pb.variant_provision(city, mx, cfg['territory'], E_ids, det['values'], near=3)
+    for scen in full:
+        for name in pb.SERVICES:
+            assert abs(full[scen][name]['env_in'] - near[scen][name]['env_in']) <= 0.5, (scen, name)
+
+
+def test_variant_replaces_territory():
+    """12.4: в варианте места школ и садов территории обнуляются, жители заменяются на N; в «как есть» с территории
+    детей не считается; изменение обеспеченности окружения — разность с «как есть»."""
+    _need_blocksnet()
+    from mixuse.compare import compare
+    cfg, city, mx = _city_mx('gatchina_layers')
+    t = city['table']
+    full, info, det = compare(city, cfg['territory'], cfg['params'], cfg['scenarios'])
+    E_ids = t['block_id'].iloc[det['E']].astype(int).tolist()
+    prov = pb.variant_provision(city, mx, cfg['territory'], E_ids, det['values'])
+    N = det['values']['Ж+К+ОД']['N']
+    s = prov['Ж+К+ОД']['school']
+    assert abs(s['children'] - N * 120 / 1000) <= len(cfg['territory'])          # округление по кварталам территории
+    assert prov['Как есть']['school']['children'] == 0 and prov['К+ОД']['school']['children'] == 0
+    assert s['delta'] == pytest.approx(s['env_in'] - prov['Как есть']['school']['env_in'])
+    full2, info2, det2 = compare(city, cfg['territory'], cfg['params'], cfg['scenarios'], prov=prov)
+    assert 'Школы: из них обеспечены в пределах доступности' in full2.index
+    assert 'Школы: без свободного места в окружении' not in full2.index
+    assert info2['школы и сады'].startswith('blocksnet')
+    # краткая таблица и вывод: дети без места = дети с территории − из них обеспечены
+    k = prov['Ж+К+ОД']['kindergarten']
+    assert f"дошкольники — {k['children'] - k['provided']:,}".replace(',', ' ') in det2['conclusions']['Ж+К+ОД']

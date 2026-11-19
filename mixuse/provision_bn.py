@@ -326,3 +326,61 @@ def as_is_report(cfg, city, mx, T_ids, R=None, factors=(0.5, 1.0, 1.5)):
 
 def _r(v):
     return None if v is None else round(float(v), 1)
+
+
+# ================================================================================================
+# ЭТАП 8.5: ОБЕСПЕЧЕННОСТЬ В ВАРИАНТАХ (ТЗ 12.4, 12.5)
+# ================================================================================================
+
+def near_blocks(mx, T_ids, minutes):
+    """Кварталы не дальше minutes от территории (по матрице, в обе стороны) — для ускорения 12.4."""
+    a = mx.loc[list(T_ids)].min(axis=0)
+    b = mx[list(T_ids)].min(axis=1)
+    return [int(i) for i in mx.index if min(a[i], b[i]) <= minutes]
+
+
+def variant_provision(city, mx, T_ids, E_ids, values, near=None):
+    """Обеспеченность «как есть» и в каждом варианте (12.4) по всему набору (или по кварталам не дальше
+    near × порога от территории — ускорение 12.4).
+
+    Вариант: жители территории заменяются на N (4.6.4), распределённые по кварталам территории пропорционально
+    площади; места школ и садов территории обнуляются (4.6.3). values — det['values'] из compare_v5.
+    Возвращает {вариант: {'school'|'kindergarten': показатели 12.5}}."""
+    t = city['table']
+    ids = t['block_id'].astype(int).to_numpy()
+    pos = {b: k for k, b in enumerate(ids)}
+    Tpos = [pos[int(i)] for i in T_ids]
+    area = t['area'].to_numpy()[Tpos]
+    out = {}
+    base_cap = {}
+    for name, (group, col, label) in SERVICES.items():
+        st = service_settings(name)
+        base_cap[name] = block_capacity(city, group, st['impute_capacity'])[0]
+    for scen, o in values.items():
+        pop = t['pop'].to_numpy().astype(float).copy()
+        out[scen] = {}
+        for name in SERVICES:
+            cap = base_cap[name].copy()
+            if o['d'] is not None:                                   # вариант: замена застройки территории
+                pop[Tpos] = o['N'] * area / area.sum()
+                cap[Tpos] = 0
+            if near:
+                st = service_settings(name)
+                keep = near_blocks(mx, T_ids, near * st['accessibility'])
+                sel = np.isin(ids, keep)
+                sub = mx.loc[keep, keep]
+                sub_city = {'table': t[sel].reset_index(drop=True)}
+                res, st = provision(sub_city, sub, name, population=pop[sel], capacity=cap[sel])
+            else:
+                res, st = provision(city, mx, name, population=pop, capacity=cap)
+            env_in, env_any, _ = provision_share(res, [i for i in E_ids if i in res.index])
+            rT = res.loc[[int(i) for i in T_ids]]
+            out[scen][name] = {'env_in': env_in, 'env_any': env_any,
+                               'children': int(rT['demand'].sum()), 'provided': int(rT['demand_within'].sum()),
+                               'provided_any': int((rT['demand_within'] + rT['demand_without']).sum()),
+                               'norm': st['demand'], 'threshold': st['accessibility']}
+    for scen in out:                                                  # изменение обеспеченности окружения, п. п.
+        for name in SERVICES:
+            v, b = out[scen][name]['env_in'], out['Как есть'][name]['env_in']
+            out[scen][name]['delta'] = None if v is None or b is None else v - b
+    return out
