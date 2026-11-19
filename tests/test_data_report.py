@@ -119,7 +119,9 @@ def test_v5_configs_pass_check(code):
     cfg = _cfg(code)
     assert cfg['rules'] == 'v5'
     if code == 'spb_full':
-        assert cfg['params']['kit'] == 1.4 and 'ПЗЗ' in cfg['param_sources']['kit']
+        assert cfg['params']['kit'] == 1.4 and 'ПЗЗ' in cfg['params']['kit_source']
+    else:
+        assert cfg['params']['kit_sp_row'] == 'zh_low_mid'          # 4.6.2: до решения автора о зоне ПЗЗ
     err, warn, info = check_config(cfg)
     assert not err, err
     assert not any('разных системах' in w for w in warn)

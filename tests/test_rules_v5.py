@@ -105,7 +105,7 @@ def build(cfg_path):
 
 @pytest.fixture
 def v5(tmp_path):
-    return build(make_v5(str(tmp_path)))
+    return build(make_v5(str(tmp_path), extra='params: {kit_sp_row: zh_low_mid}' + chr(10)))   # КИТ по СП 42.13330.2016 (4.6.2)
 
 
 def by_block(city, col):

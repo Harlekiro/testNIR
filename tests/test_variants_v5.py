@@ -2,16 +2,16 @@
 
 Маленький пример — test_rules_v5.make_v5; территория — квартал 21. Окружение (центр не дальше 800 м от контура
 квартала 21, x 300–500): кварталы 20 (центр x = 100, 200 м), 22 (700, 200 м), 23 (1 000, 500 м), 24 (1 300, ровно 800 м).
-КИТ окружения = Σ поэтажной площади всех зданий E ÷ Σ площади кварталов E:
+КИТ варианта — по СП 42.13330.2016, табл. Б.1 (zh_low_mid, 0,8); КИТ окружения — только для сравнения (4.6.2):
   кв. 20: 800 + 1 200 + 400 + 800 + 312,14 + 312,14 = 3 824,29;  кв. 22: 2 000 + 400 + 800 + 400 = 3 600;
   кв. 23: 800;  кв. 24: 400  →  8 624,29 ÷ (4 · 40 000) = 0,0539 → 0,05.
 """
 import pytest
 
 from test_rules_v5 import make_v5, build, CIRCLE
-from mixuse.compare import compare, conclusion, choose_kit, environment, territory_indices
+from mixuse.compare import compare, conclusion, choose_kit, environment, territory_indices, KitError
 from mixuse.params import SCENARIOS_V5
-from mixuse.config import load_config, param_origins
+from mixuse.config import load_config, param_origins, ConfigError
 
 
 def test_default_scenarios_v5(tmp_path):
@@ -26,41 +26,59 @@ def test_default_scenarios_v5(tmp_path):
     assert list(cfg['scenarios']) == ['Ж+К', 'Ж+К+ОД', 'К+ОД', 'ОД+П', 'Ж+П']
     assert cfg['scenarios']['Ж+К+ОД'] == {'Ж': 75, 'К': 5, 'ОД': 20, 'П': 0}
 
+NL = chr(10)
+SP_ROW = 'params: {kit_sp_row: zh_low_mid}' + NL     # КИТ по СП 42.13330.2016, табл. Б.1: 0,8
 
-def test_kit_by_data(tmp_path):
+
+def test_kit_required(tmp_path):
+    """4.6.2: без КИТ из ПЗЗ и без строки СП расчёт не идёт — КИТ окружения основным значением не служит."""
     cfg, L, city = build(make_v5(str(tmp_path)))
+    with pytest.raises(KitError, match='kit_sp_row'):
+        compare(city, [21], cfg['params'], cfg['scenarios'])
+
+
+def test_kit_by_sp42_and_env_for_comparison(tmp_path):
+    cfg, L, city = build(make_v5(str(tmp_path), extra=SP_ROW))
     t = city['table']
     T = territory_indices(t, [21])
     E, _, _ = environment(city, T, 800)
     assert sorted(t.block_id.iloc[E]) == [20, 22, 23, 24]
     fa = 800 + 1200 + 400 + 800 + 2 * CIRCLE + 2000 + 400 + 800 + 400 + 800 + 400
-    kit, how, kitE, warn = choose_kit(t, E, cfg['params'])
-    assert kitE == pytest.approx(fa / 160000, rel=1e-4) and kit == 0.05 and how.startswith('по данным')
-    assert warn is None                                           # этажность указана у всех зданий
+    kit, how, kitE, warns = choose_kit(t, E, cfg['params'])
+    assert kit == 0.8 and how.startswith('свод правил: СП 42.13330.2016, табл. Б.1')
+    assert kitE == pytest.approx(fa / 160000, rel=1e-4) and warns == []
     full, info, det = compare(city, [21], cfg['params'], cfg['scenarios'])
-    F = 40000 * 0.05
+    F = 40000 * 0.8
     assert info['поэтажная площадь F, м²'] == round(F)
+    assert info['КИТ окружения по данным (для сравнения)'] == 0.05
+    assert info['КИТ варианта / окружения'] == f'0,80 / 0,05 (в {0.8 / (fa / 160000):.1f} раз плотнее)'.replace('.', ',')
     assert full.loc['Жители на территории N', 'Ж+К+ОД'] == round(F * 0.75 * 0.7 / 30)
     assert full.loc['Рабочие места на территории J', 'Ж+К+ОД'] == round(F * (0.05 / 28 + 0.20 / 15))
     origins = {k: how for k, _, how in param_origins(cfg, info)}
-    assert origins['kit'].startswith('по данным') and origins['R'] == 'по умолчанию — без источника'
+    assert origins['kit'].startswith('свод правил') and origins['R'] == 'по умолчанию — без источника'
 
 
-def test_kit_user_and_warning(tmp_path):
-    cfg, L, city = build(make_v5(str(tmp_path), extra='params: {kit: 1.4}\nparam_sources: {kit: ПЗЗ}\n'))
+def test_kit_user_has_priority_and_pzz_check(tmp_path):
+    extra = 'params: {kit: 1.4, kit_source: ПЗЗ, kit_sp_row: zh_low_mid, pzz_build_share: 40, pzz_max_storeys: 3}' + NL
+    cfg, L, city = build(make_v5(str(tmp_path), extra=extra))
     full, info, det = compare(city, [21], cfg['params'], cfg['scenarios'])
-    assert (info['КИТ варианта'], info['КИТ: откуда']) == (1.4, 'пользователь')
+    assert (info['КИТ варианта'], info['КИТ: откуда']) == (1.4, 'пользователь: ПЗЗ')
     assert dict((k, h) for k, _, h in param_origins(cfg, info))['kit'] == 'пользователь: ПЗЗ'
-    # предупреждение «КИТ занижен»: больше половины зданий окружения без этажности
-    t = city['table'].copy()
+    assert any('больше предела по ПЗЗ 1.20' in w for w in info['предупреждения'])      # 0,4 × 3 = 1,2 < 1,4
+    t = city['table'].copy()                       # предупреждение «КИТ окружения занижен»
     t['n_bld_default'] = t['n_bld']
     T = territory_indices(t, [21])
     E, _, _ = environment(city, T, 800)
-    assert 'занижен' in choose_kit(t, E, cfg['params'])[3]
+    assert any('занижен' in w for w in choose_kit(t, E, cfg['params'])[3])
+
+
+def test_kit_sp_row_checked(tmp_path):
+    with pytest.raises(ConfigError, match='kit_sp_row'):
+        load_config(make_v5(str(tmp_path), extra='params: {kit_sp_row: zh_mega}' + NL))
 
 
 def test_short_table_rows(tmp_path):
-    cfg, L, city = build(make_v5(str(tmp_path)))
+    cfg, L, city = build(make_v5(str(tmp_path), extra=SP_ROW))
     full, info, det = compare(city, [21], cfg['params'], cfg['scenarios'])
     assert list(det['short'].index) == [
         'Жители на территории', 'Рабочие места на территории (изменение к нынешним)', 'Рабочих мест на жителя в окружении',

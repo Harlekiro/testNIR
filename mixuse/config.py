@@ -6,7 +6,7 @@ import os
 
 import yaml
 
-from .params import DEFAULTS, SCENARIOS, SCENARIOS_V5, defaults
+from .params import DEFAULTS, SCENARIOS, SCENARIOS_V5, defaults, TEXT_PARAMS, SP42_B1
 from .groups import load_group_table
 
 
@@ -42,6 +42,12 @@ def merge_params(user, rules='v4'):
         if k not in base:
             raise ConfigError(f'Неизвестный параметр «{k}» для правил {rules}. Допустимые: {", ".join(base)}.')
         d = base[k]
+        if k in TEXT_PARAMS:                   # строковые параметры
+            P[k] = None if v is None else str(v).strip()
+            if k == 'kit_sp_row' and P[k] is not None and P[k] not in SP42_B1:
+                raise ConfigError(f'kit_sp_row: «{v}» — нет такой строки табл. Б.1 СП 42.13330.2016. '
+                                  f'Допустимо: {", ".join(SP42_B1)}.')
+            continue
         if isinstance(d, bool):
             P[k] = _yes_no(v, k)
         elif isinstance(d, dict):              # нормы по типам: можно переопределить часть
@@ -142,16 +148,19 @@ __all__ = ['load_config', 'finish_config', 'merge_params', 'ConfigError']
 
 def param_origins(cfg, info=None):
     """Откуда взято значение каждого параметра (ТЗ 5.1): «пользователь» (с источником из param_sources),
-    «по данным» (сейчас только КИТ — 4.6.2), «по умолчанию» (со статусом из таблицы раздела 5).
-    info — сводка compare (для КИТ, выбранного по данным). Возвращает список (параметр, значение, откуда)."""
+    «свод правил» (сейчас только КИТ — СП 42.13330.2016, 4.6.2), «по умолчанию» (со статусом из таблицы раздела 5).
+    КИТ окружения по данным — только для сравнения, сюда не входит.
+    info — сводка compare (выбранный КИТ и его источник). Возвращает список (параметр, значение, откуда)."""
     from .params import PARAM_STATUS
     user, src = set(cfg.get('_user_params', [])), cfg.get('param_sources', {})
     rows = []
     for k, v in cfg['params'].items():
-        if k in user:
-            how = 'пользователь' + (f': {src[k]}' if k in src else ' (источник не указан)')
-        elif k == 'kit' and info and info.get('КИТ: откуда'):
+        if k == 'kit' and info and info.get('КИТ: откуда'):          # 4.6.2: пользователь или свод правил
             v, how = info['КИТ варианта'], info['КИТ: откуда']
+        elif k == 'kit_source' and v:
+            how = 'пользователь'
+        elif k in user:
+            how = 'пользователь' + (f': {src[k]}' if k in src else ' (источник не указан)')
         else:
             how = 'по умолчанию' + (f' — {PARAM_STATUS[k]}' if k in PARAM_STATUS else '')
         rows.append((k, v, how))

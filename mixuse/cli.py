@@ -15,13 +15,13 @@ import pandas as pd
 from .config import load_config, ConfigError, param_origins
 from .geometry import CRSError
 from .blocks import load_layers, build_table, DataError
-from .compare import compare, TerritoryError
+from .compare import compare, TerritoryError, KitError
 from .checks import check_config, sensitivity, builtin_sensitivity, estimates_check, stats_check, threshold_check
 from . import export
 from .init_config import make_config
 from .data_report import data_report
 
-USER_ERRORS = (ConfigError, CRSError, DataError, TerritoryError, FileNotFoundError)
+USER_ERRORS = (ConfigError, CRSError, DataError, TerritoryError, KitError, FileNotFoundError)
 
 
 def _say(*a):

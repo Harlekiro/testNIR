@@ -122,8 +122,11 @@ def compare(city, T_ids, P, SCN):
 # ПРАВИЛА v5: выбор КИТ, подробная и краткая таблица, вывод (ТЗ 4.6, 4.7)
 # ================================================================================================
 
-KIT_PZZ_SPB = 1.4            # ПЗЗ Санкт-Петербурга, зоны ТСМ и ТД1-1 — только справочно (4.6.2)
 GROUP_WORDS = {'К': 'торговле и услугам', 'ОД': 'общественно-деловой функции'}
+
+
+class KitError(ValueError):
+    """КИТ варианта не задан — сообщение для пользователя."""
 
 
 def fmt(v, d=0):
@@ -132,24 +135,50 @@ def fmt(v, d=0):
 
 
 def choose_kit(t, E, P):
-    """КИТ варианта по правилу 5.1 / 4.6.2:
-        1) значение пользователя (параметр kit);
-        2) иначе КИТ окружения по данным: КИТ_E = Σ поэтажной площади всех зданий кварталов E ÷ Σ площади кварталов E,
-           округлённо до 0,01 (как на странице);
-        3) 1,4 (ПЗЗ СПб) — только справочно; используется, лишь если окружения нет.
-    Возвращает (КИТ, откуда, КИТ_E, предупреждение или None)."""
+    """КИТ варианта — один для всех вариантов территории (правило 4.6.2, порядок 5.1):
+        1) КИТ из ПЗЗ или проекта планировки — значение пользователя (kit, источник kit_source);
+        2) если его нет — коэффициент плотности застройки по СП 42.13330.2016, табл. Б.1, строка kit_sp_row
+           (предельное значение для квартала брутто: вариант показывает наибольший допустимый объём);
+        3) предел по ПЗЗ — только проверка: КИТ_пред = pzz_build_share × pzz_max_storeys; КИТ варианта больше — предупреждение;
+        4) КИТ окружения по данным — только для сравнения: КИТ_E = Σ поэтажной площади всех зданий E ÷ Σ площади кварталов E;
+           если у большей части зданий окружения этажность по умолчанию — предупреждение, что КИТ_E занижен.
+    Возвращает (КИТ, источник, КИТ_E, предупреждения)."""
+    from .params import SP42_B1, SP42_NAME
     area = t['area'].iloc[E].sum()
     kitE = float(t['fa'].iloc[E].sum() / area) if len(E) and area > 0 else None
-    warn = None
+    warns = []
     n = t['n_bld'].iloc[E].sum() if len(E) else 0
     if n and t['n_bld_default'].iloc[E].sum() / n > 0.5:
-        warn = (f'У {100 * t["n_bld_default"].iloc[E].sum() / n:.0f} % зданий окружения этажность не указана и принята '
-                'по умолчанию (4.2.2): КИТ окружения по данным занижен.')
+        warns.append(f'У {100 * t["n_bld_default"].iloc[E].sum() / n:.0f} % зданий окружения этажность не указана и принята '
+                     'по умолчанию (4.2.2): КИТ окружения по данным занижен.')
     if P.get('kit') is not None:
-        return float(P['kit']), 'пользователь', kitE, warn
-    if kitE is not None:
-        return round(kitE, 2), 'по данным: КИТ окружения', kitE, warn
-    return KIT_PZZ_SPB, 'по умолчанию: 1,4 (ПЗЗ СПб, справочно) — окружения нет', kitE, warn
+        kit = float(P['kit'])
+        source = 'пользователь: ' + (P.get('kit_source') or 'ПЗЗ или проект планировки (источник не указан)')
+    elif P.get('kit_sp_row'):
+        name, kit = SP42_B1[P['kit_sp_row']]
+        source = f'свод правил: {SP42_NAME}, строка «{name}» ({P["kit_sp_row"]})'
+    else:
+        raise KitError('КИТ варианта не задан (правило 4.6.2). Укажите в настройках набора КИТ из ПЗЗ или проекта '
+                       'планировки (params: kit, kit_source) или, если в ПЗЗ его нет, строку таблицы Б.1 '
+                       'СП 42.13330.2016 по типу зоны, в которую переводится территория (params: kit_sp_row), '
+                       'например zh_low_mid. КИТ окружения по данным основным значением быть не может.')
+    share, storeys = P.get('pzz_build_share'), P.get('pzz_max_storeys')
+    if share and storeys:
+        share = share / 100 if share > 1 else share          # 40 % или 0,4
+        lim = share * storeys
+        if kit > lim + 1e-9:
+            warns.append(f'КИТ варианта {kit:.2f} больше предела по ПЗЗ {lim:.2f} (процент застройки {100 * share:.0f} % × '
+                         f'{storeys:g} этажей, 4.6.2, п. 3).')
+    return kit, source, kitE, warns
+
+
+def kit_line(kit, kitE):
+    """Строка «КИТ варианта / окружения (в N раз плотнее)» (4.6.2, п. 4)."""
+    if not kitE:
+        return f'{kit:.2f} / — (окружения нет)'
+    r = kit / kitE
+    how = f'в {r:.1f} раз плотнее' if r >= 1 else f'в {1 / r:.1f} раз реже'
+    return f'{kit:.2f} / {kitE:.2f} ({how})'.replace('.', ',')
 
 
 def compare_v5(city, T_ids, P, SCN):
@@ -166,7 +195,7 @@ def compare_v5(city, T_ids, P, SCN):
     t = city['table']; G = city['geom']
     T = territory_indices(t, T_ids)
     E, inT, distT = environment(city, T, P['R'])
-    kit, kit_from, kitE, kit_warn = choose_kit(t, E, P)
+    kit, kit_from, kitE, kit_warns = choose_kit(t, E, P)
     C = t[['cx', 'cy']].to_numpy()
     S = t.area.iloc[T].sum(); F = S * kit
     popE, jobsE, jobsE_A = t['pop'].iloc[E].sum(), t['jobs'].iloc[E].sum(), t['jobs_A'].iloc[E].sum()
@@ -220,8 +249,8 @@ def compare_v5(city, T_ids, P, SCN):
     short.loc['Вывод'] = ['—'] + [concl[n] for n in names[1:]]
     info = {'кварталов на территории': len(T), 'площадь территории, га': round(float(S) / 1e4, 1),
             'КИТ варианта': kit, 'КИТ: откуда': kit_from,
-            'КИТ окружения по данным': None if kitE is None else round(kitE, 2),
-            'КИТ 1,4 (ПЗЗ СПб) — справочно': KIT_PZZ_SPB,
+            'КИТ окружения по данным (для сравнения)': None if kitE is None else round(kitE, 2),
+            'КИТ варианта / окружения': kit_line(kit, kitE),
             'поэтажная площадь F, м²': int(round(F)),
             'кварталов в окружении': len(E), 'жителей в окружении': int(round(popE)), 'рабочих мест в окружении': int(round(jobsE)),
             'рабочих мест в окружении, нижняя граница': int(round(jobsE_A)),
@@ -230,7 +259,7 @@ def compare_v5(city, T_ids, P, SCN):
         info['до метро, м'] = int(round(dist_points_to_polys(city['pts']['метро'], Tpolys).min()))
     if len(city['pts']['остановка']):
         info['до остановки, м'] = int(round(dist_points_to_polys(city['pts']['остановка'], Tpolys).min()))
-    warns = [kit_warn] if kit_warn else []
+    warns = list(kit_warns)
     maxJ = max(out[n]['Jcity'] for n in names[1:]) if len(names) > 1 else 0
     maxN = max(out[n]['N'] for n in names[1:]) if len(names) > 1 else 0
     if maxJ > 10 or maxN > 0.15 * popA:                    # как на демо-странице

@@ -21,4 +21,7 @@ fields:
 services: ../data/gatchina_layers/services
 capacity_field: capacity
 territory: [322, 323, 377]  # утверждена автором 19.11.2026; в 322 — ЦНИИ КМ «Прометей», «Гатчинский хлеб»
-params: {}
+params:
+  kit_sp_row: zh_low_mid    # КИТ в ПЗЗ не установлен → СП 42.13330.2016, табл. Б.1 (4.6.2, п. 2): 0,8 — до решения автора
+param_sources:
+  kit_sp_row: "до решения автора — [НУЖНЫ ДАННЫЕ: зона ПЗЗ, в которую попадает территория]"
