@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mixuse"
+version = "0.8.0"
+description = "Сравнение сочетаний функций на территории (метод НИР «смешанное использование территорий»)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pandas", "matplotlib", "pyyaml"]
+
+[project.optional-dependencies]
+# Обеспеченность школами и садами (ТЗ, раздел 12). Версия закреплена (ТЗ 12.3): blocksnet-data, requirements.txt.
+# blocksnet 1.0.0.dev1 требует старых пакетов (pandera 0.20.2, PuLP 2.7.0, iduedu 0.4.1) — ставьте в отдельное
+# окружение с Python 3.11: py -3.11 -m venv … && pip install -e .[blocksnet]
+blocksnet = ["blocksnet==1.0.0.dev1", "psutil"]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["mixuse"]

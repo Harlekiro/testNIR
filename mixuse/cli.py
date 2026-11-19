@@ -5,6 +5,7 @@
     python -m mixuse blocks  configs/<код>.yaml       таблица кварталов (шаги 1–4)
     python -m mixuse compare configs/<код>.yaml       сравнение вариантов (шаги 5–6) + шаги 7, 7б, карта, слои
     python -m mixuse explore configs/<код>.yaml       перебор сочетаний долей (раздел 7)
+    python -m mixuse access  configs/<код>.yaml       матрица доступности через blocksnet (раздел 12; Python 3.11)
 """
 import argparse
 import os
@@ -264,6 +265,28 @@ def cmd_explore(args):
     return 0
 
 
+def cmd_access(args):
+    """Этап 8.3: матрица доступности по кварталам набора (blocksnet), сохраняется в data/<код>/access/."""
+    from .provision_bn import build_matrix, save_matrix, check_matrix, file_sha256, BlocksnetError
+    cfg = load_config(args.config)
+    try:
+        mx, meta = build_matrix(cfg, graph_type=args.graph, say=_say)
+    except BlocksnetError as e:
+        raise ConfigError(str(e))
+    from .blocks import load_blocks
+    ids = load_blocks(cfg)[0]['block_id'].tolist()
+    errs = check_matrix(mx, meta, ids, file_sha256(cfg['blocks']))
+    if errs:
+        raise DataError('Матрица не соответствует кварталам mixuse: ' + '; '.join(errs))
+    pm, pj = save_matrix(cfg, mx, meta, args.graph)
+    _say(f'Соответствие кварталов: {len(ids)} номеров, порядок и номера совпадают с таблицей mixuse.')
+    for k, v in meta.items():
+        if k != 'block_id':
+            _say(f'  {k}: {v}')
+    _say(f'\nСохранено:\n  {pm}\n  {pj}')
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog='python -m mixuse', description='Сравнение сочетаний функций на территории.')
     sub = p.add_subparsers(dest='cmd', required=True, metavar='команда')
@@ -295,6 +318,11 @@ def build_parser():
     e.add_argument('--min', action='append', help='минимум доли группы, например ОД=10')
     e.add_argument('--filter', action='append', help='условие, например "K окружения>=0.5" (можно несколько)')
     e.set_defaults(fn=cmd_explore)
+    a2 = sub.add_parser('access', help='матрица доступности кварталов через blocksnet (раздел 12, этап 8.3)')
+    a2.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
+    a2.add_argument('--graph', default='walk', choices=['walk', 'drive', 'intermodal'],
+                    help='вид графа (по решению автора — walk, пешеходный)')
+    a2.set_defaults(fn=cmd_access)
     return p
 
 
