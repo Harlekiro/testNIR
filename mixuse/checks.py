@@ -233,3 +233,55 @@ def builtin_sensitivity(L, cfg, P, T, SCN, s0_values=(50, 100, 300)):
                      'рабочих мест': int(round(t2['jobs'].sum())), 'K_ref': round(float(t2['jobs'].sum() / t2['pop'].sum()), 3),
                      **{f'K окружения {s.split()[0]}': tb.loc['Работа на жителя K: окружение', s] for s in ['Как есть'] + list(SCN)}})
     return pd.DataFrame(rows)
+
+
+# ================================================================================================
+# ПРОВЕРКИ ПРАВИЛ v5 (раздел 4.8 ТЗ)
+# ================================================================================================
+
+def _k_rows(tb, SCN, row):
+    return {f'K окружения {s.split()[0]}': tb.loc[row, s] for s in ['Как есть'] + list(SCN)}
+
+
+def estimates_check(city, T, P, SCN):
+    """4.8.3. Основная оценка (А + Б) против нижней границы (только А): рабочие места всего и на территории,
+    K окружения «как есть» и по вариантам в обеих оценках."""
+    t = city['table']
+    tb, info, _ = compare(city, T, P, SCN)
+    rows = []
+    for name, total, row_J, row_K in [
+            ('основная (А + Б)', t['jobs'].sum(), 'Рабочие места на территории J', 'Работа на жителя K: окружение'),
+            ('нижняя граница (только А)', t['jobs_A'].sum(), 'Рабочие места на территории J, нижняя граница',
+             'Работа на жителя K: окружение, нижняя граница')]:
+        rows.append({'оценка': name, 'рабочих мест всего': int(round(total)),
+                     'рабочих мест на территории как есть': tb.loc[row_J, 'Как есть'], **_k_rows(tb, SCN, row_K)})
+    return pd.DataFrame(rows)
+
+
+def stats_check(city, P):
+    """4.8.4. Сравнение со статистикой (только если задан stat_jobs): основная оценка, нижняя граница и внешнее число."""
+    if not P.get('stat_jobs'):
+        return None
+    t = city['table']; S = float(P['stat_jobs'])
+    rows = [{'что': 'основная оценка (А + Б)', 'рабочих мест': int(round(t['jobs'].sum()))},
+            {'что': 'нижняя граница (только А)', 'рабочих мест': int(round(t['jobs_A'].sum()))},
+            {'что': 'статистика (stat_jobs)', 'рабочих мест': int(round(S))}]
+    for r in rows:
+        r['к статистике, %'] = round(100 * r['рабочих мест'] / S, 1)
+    return pd.DataFrame(rows)
+
+
+def threshold_check(L, cfg, P, T, SCN, values=(500, 1000, 2000)):
+    """4.8.5. Порог площади одноэтажного здания производственной зоны (prod_min_footprint_one_storey):
+    рабочие места шага 5, всего, K окружения «как есть» и по вариантам. Слои не перечитываются."""
+    rows = []
+    for v in values:
+        pp = dict(P, prod_min_footprint_one_storey=v)
+        c2 = table_from_layers(L, cfg, pp)
+        b = c2['detail']['buildings']
+        tb, _, _ = compare(c2, T, pp, SCN)
+        rows.append({'порог, м²': v, 'зданий шага 5': int((b.step == 5).sum()),
+                     'рабочих мест шага 5': int(round(b.loc[b.step == 5, 'jobs_B'].sum())),
+                     'рабочих мест всего': int(round(c2['table']['jobs'].sum())),
+                     **_k_rows(tb, SCN, 'Работа на жителя K: окружение')})
+    return pd.DataFrame(rows)

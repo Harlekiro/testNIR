@@ -16,7 +16,7 @@ from .config import load_config, ConfigError
 from .geometry import CRSError
 from .blocks import load_layers, build_table, DataError
 from .compare import compare, TerritoryError
-from .checks import check_config, sensitivity, builtin_sensitivity
+from .checks import check_config, sensitivity, builtin_sensitivity, estimates_check, stats_check, threshold_check
 from . import export
 from .init_config import make_config
 from .data_report import data_report
@@ -46,8 +46,7 @@ def _prepare(cfg):
 
 def _report_lines(cfg, city):
     lines = [f'Набор данных: {cfg["name"]}', f'Настройки: {cfg["_path"]}', '', 'Отчёт о подготовке данных:']
-    if cfg.get('rules') == 'v5':
-        lines.append('  правила расчёта: в настройках v5, но правила v5 вводятся на этапе 4 — пока таблица считается по v4')
+    lines.append(f'  правила расчёта: {cfg.get("rules", "v5")}')
     for n in city.get('crs_notes', []):
         lines.append(f'  пересчёт координат: {n}')
     for k, v in city['report'].items():
@@ -119,6 +118,8 @@ def cmd_blocks(args):
     files = [export.blocks_csv(city, export.out_path(out, code, 'таблица_кварталов.csv')),
              export.blocks_geojson(city, export.out_path(out, code, 'кварталы.geojson')),
              export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt'))]
+    if cfg['rules'] == 'v5':
+        files.append(export.buildings_csv(city, export.out_path(out, code, 'здания.csv')))
     _say('\nСохранено:'); [_say('  ' + f) for f in files]
     return 0
 
@@ -150,13 +151,26 @@ def cmd_compare(args):
             if bs is not None:
                 files.append(export.table_csv(bs, export.out_path(out, code, 'встроенные.csv'), index=False))
                 _say('\nШаг 7б. Встроенные помещения:'); _say(bs.to_string(index=False))
+            if cfg['rules'] == 'v5':
+                for title, df, suffix in [
+                        ('4.8.3. Основная оценка и нижняя граница', estimates_check(city, T, P, SCN), 'оценки.csv'),
+                        ('4.8.4. Сравнение со статистикой', stats_check(city, P), 'статистика.csv'),
+                        ('4.8.5. Порог площади одноэтажного здания производственной зоны',
+                         threshold_check(L, cfg, P, T, SCN), 'порог_цеха.csv')]:
+                    if df is not None:
+                        files.append(export.table_csv(df, export.out_path(out, code, suffix), index=False))
+                        _say(f'\n{title}:'); _say(df.to_string(index=False))
     show = args.show or (list(SCN)[1] if len(SCN) > 1 else list(SCN)[0])
     if show not in SCN:
         raise ConfigError(f'--show: варианта «{show}» нет. Есть: {", ".join(SCN)}')
     files += [export.map_png(city, det, show, P['R'], cfg.get('title') or code, export.out_path(out, code, f'карта_{show.split()[0]}.png')),
               export.blocks_geojson(city, export.out_path(out, code, 'кварталы.geojson'), det, SCN),
-              export.web_json(city, cfg, export.out_path(out, code, 'для_страницы.json')),
               export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt'))]
+    if cfg['rules'] == 'v5':
+        files.append(export.buildings_csv(city, export.out_path(out, code, 'здания.csv')))
+        _say('\nФайл для страницы по правилам v5 появится на этапе 7.')
+    else:
+        files.append(export.web_json(city, cfg, export.out_path(out, code, 'для_страницы.json')))
     _say('\nСохранено:'); [_say('  ' + f) for f in files]
     return 0
 

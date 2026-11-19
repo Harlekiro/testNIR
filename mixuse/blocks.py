@@ -197,6 +197,8 @@ def table_from_layers(L, cfg, P):
     bdf = bdf[inbox].reset_index(drop=True); bpolys = [p for p, k in zip(bpolys, inbox) if k]; ip = ip[inbox]
     bdf['block'] = assign_points(ip, list(blocks['polys'])) if len(ip) else np.zeros(0, int)
     sel = bdf.block >= 0; bdf = bdf[sel].reset_index(drop=True); bpolys = [p for p, k in zip(bpolys, sel) if k]
+    ip = ip[sel.to_numpy()]
+    bdf['ix'], bdf['iy'] = ip[:, 0], ip[:, 1]                      # точка на поверхности здания (таблица зданий для QGIS)
     report['зданий в кварталах'] = len(bdf)
     f = cfg['fields']
     if f.get('footprint') in bdf:
@@ -216,14 +218,18 @@ def table_from_layers(L, cfg, P):
     bdf['floor_area'] = bdf['footprint'] * st
 
     # --- встроенные помещения жилых домов
+    v5 = cfg.get('rules') == 'v5'
     bdf['bi_К'] = 0.0; bdf['bi_ОД'] = 0.0
+    bi_types = {}                                           # дом → типы сервисов К и ОД в нём (норма встроенных, 4.3)
     if P.get('builtin', True):
         res_idx = np.where((bdf.living & (st >= P.get('builtin_min_storeys', 2))).to_numpy())[0]
         bs = s[s.group.isin(['К', 'ОД'])].reset_index(drop=True)
         own = assign_points(bs[['x', 'y']].to_numpy(), [bpolys[i] for i in res_idx]) if len(res_idx) and len(bs) else np.full(len(bs), -1)
         cnt = defaultdict(lambda: {'К': 0, 'ОД': 0})
-        for o, g in zip(own, bs.group):
-            if o >= 0: cnt[res_idx[o]][g] += 1
+        for o, g, ty in zip(own, bs.group, bs.service_type):
+            if o >= 0:
+                cnt[res_idx[o]][g] += 1
+                bi_types.setdefault(res_idx[o], {'К': [], 'ОД': []})[g].append(ty)
         capped = 0
         for i, c in cnt.items():
             bK, bOD, cap = builtin_premises(c['К'], c['ОД'], bdf.at[i, 'footprint'], P.get('builtin_s0'), P.get('builtin_share', 1.0))
@@ -249,9 +255,22 @@ def table_from_layers(L, cfg, P):
     if f.get('population') in bdf:
         pp = pd.to_numeric(bdf[f['population']], errors='coerce')
         bdf['pop_missing'] = pp.isna() & bdf.living                 # для отчёта о данных (4.2.3)
-        report['жилых домов без числа жителей (принято 0)'] = int((pp.isna() & bdf.living).sum())
         report['нежилых зданий с жителями в поле (обнулены)'] = int(((~bdf.living) & (pp.fillna(0) > 0)).sum())
-        bdf['pop'] = pp.fillna(0)
+        if v5:
+            # 4.2.3: пустое значение у жилого дома → жители = жилая площадь ÷ q; прибавка больше 1 % — остановка
+            est = bdf['living_area'] / P['q']
+            add = float(est[bdf['pop_missing']].sum())
+            total = float(pp.fillna(0)[bdf.living].sum()) + add
+            report['жилых домов без числа жителей (жители = жилая площадь ÷ q, 4.2.3)'] = int(bdf['pop_missing'].sum())
+            report['  прибавка жителей по 4.2.3'] = f'{add:.0f} ({100 * add / total if total else 0:.2f} %)'
+            if total and add / total > 0.01:
+                raise DataError(f'Правило 4.2.3: у {int(bdf["pop_missing"].sum())} жилых домов нет числа жителей; расчёт '
+                                f'добавил бы {add:.0f} жителей ({100 * add / total:.1f} % — больше 1 %). Пустое значение может '
+                                'означать ноль намеренно: покажите это автору метода, прежде чем считать дальше.')
+            bdf['pop'] = pp.where(~bdf['pop_missing'], est).fillna(0)
+        else:
+            report['жилых домов без числа жителей (принято 0)'] = int((pp.isna() & bdf.living).sum())
+            bdf['pop'] = pp.fillna(0)
     else:
         bdf['pop'] = bdf['living_area'] / P['q']
         report['жители'] = 'оценка: жилая площадь ÷ q (поле не задано)'
@@ -273,6 +292,8 @@ def table_from_layers(L, cfg, P):
         gs = found.get(i, set())
         by_service += bool(gs)
         bdf.at[i, 'group'] = building_group(gs, blocks.at[bdf.at[i, 'block'], 'zone'], rules)
+    if v5:
+        return _finish_v5(L, cfg, P, report, blocks, s, bdf, bpolys, st, nr_idx, owner, fs, bi_types)
     for g in FUNCS + ['X']:
         report[f'нежилых зданий в группе {g}'] = int((bdf.group == g).sum())
     report['  из них группа по сервисам внутри / по зоне или X'] = f'{by_service} / {len(nr_idx) - by_service}'
@@ -293,6 +314,75 @@ def table_from_layers(L, cfg, P):
     pts = {g: s.loc[s.group == g, ['x', 'y']].to_numpy() for g in ['метро', 'остановка']}
     city = finish_table(t, L, P, pts, report)
     city['detail'] = {'buildings': bdf, 'bpolys': bpolys, 'services': s, 'services_all': L['services']}   # здания и сервисы для отчёта о данных
+    return city
+
+
+def _finish_v5(L, cfg, P, report, blocks, s, bdf, bpolys, st, nr_idx, owner, fs, bi_types):
+    """Правила v5 (раздел 4 ТЗ): рабочие места по шагам 4.4, наличие функций 4.5, таблица кварталов.
+
+        jobs = jobs_A + jobs_B — основная оценка; jobs_A — нижняя граница (категория А и встроенные помещения, 4.4.5);
+        есть К, ОД — в квартале есть сервис группы или встроенное помещение группы (B_g > 0);
+        есть П — есть сервис группы П или здание шагов 4–5 (4.5);
+        fa — поэтажная площадь всех зданий квартала, жилых и нежилых, без порога S_min (для КИТ окружения, 4.6.2).
+    """
+    from .buildings import jobs_v5, steps_report
+    from .groups import load_norms
+    norms = load_norms(cfg.get('service_groups'))
+    type_group = dict(zip(s.service_type, s.group))
+    types_in = defaultdict(list)                            # здание → типы сервисов К, ОД, П в контуре (4.4.2)
+    for o, ty in zip(owner, fs.service_type):
+        if o >= 0:
+            types_in[nr_idx[o]].append(ty)
+    SOC = P['social_norms']
+    sv = s[s.service_type.isin(list(SOC))].reset_index(drop=True)
+    sown = assign_points(sv[['x', 'y']].to_numpy(), [bpolys[i] for i in nr_idx]) if len(nr_idx) and len(sv) else np.full(len(sv), -1)
+    social_in = defaultdict(list)                           # здание → социальные объекты в контуре (тип, мест)
+    for o, ty, cap in zip(sown, sv.service_type, sv.capacity):
+        if o >= 0:
+            social_in[nr_idx[o]].append((ty, cap))
+    rules = cfg.get('zone_rules', [])
+    zone_of_block = np.array([zone_group(z, rules) for z in blocks['zone']], dtype=object)
+    counters = jobs_v5(bdf, bpolys, nr_idx, st.to_numpy(), types_in, social_in, zone_of_block, bi_types, P, norms, type_group)
+
+    steps = steps_report(bdf)
+    report['шаги таблицы 4.4: зданий / поэтажная площадь, м² / рабочих мест'] = {
+        k: f'{n} / {a:.0f} / {j:.0f}' for k, (n, a, j) in steps.items()}
+    report['школ без числа мест (0 рабочих мест, шаг 2)'] = counters.get('школа без числа мест', 0)
+    report['зданий со школой и другими социальными объектами (считается школа)'] = counters.get('школа и другие социальные объекты', 0)
+    report['зданий с несколькими социальными типами без школы (норма по 4.4.3)'] = counters.get('несколько социальных типов', 0)
+    report['типов без нормы (принята норма группы a_g, 4.4.3)'] = counters.get('типов без нормы', 0)
+
+    t = blocks[['block_id', 'zone', 'area', 'cx', 'cy']].copy()
+    by = bdf.groupby('block')
+    t['pop'] = by['pop'].sum().reindex(t.index).fillna(0)
+    t['liv'] = by['living_area'].sum().reindex(t.index).fillna(0)
+    t['fa'] = by['floor_area'].sum().reindex(t.index).fillna(0)
+    for g in ['К', 'ОД']:
+        t['встр_' + g] = by['bi_' + g].sum().reindex(t.index).fillna(0)
+    for g in FUNCS:
+        t['n_' + g] = s[(s.block >= 0) & (s.group == g)].groupby('block').size().reindex(t.index).fillna(0).astype(int)
+    for g, col in [('школа', 'cap_school'), ('детский_сад', 'cap_kinder')]:
+        t[col] = s[(s.block >= 0) & (s.group == g)].groupby('block')['capacity'].sum().reindex(t.index).fillna(0)
+    t['jobs_A'] = by['jobs_A'].sum().reindex(t.index).fillna(0)
+    t['jobs_B'] = by['jobs_B'].sum().reindex(t.index).fillna(0)
+    t['jobs'] = t['jobs_A'] + t['jobs_B']
+    t['П_по_зданию'] = bdf[bdf.step.isin([4, 5])].groupby('block').size().reindex(t.index).fillna(0) > 0
+    for g in ['К', 'ОД']:
+        t['есть_' + g] = (t['n_' + g] > 0) | (t['встр_' + g] > 0)
+    t['есть_П'] = (t['n_П'] > 0) | t['П_по_зданию']
+
+    report['кварталов с П: по сервисам / по зданиям шагов 4–5 / всего'] = \
+        f"{int((t.n_П > 0).sum())} / {int(t['П_по_зданию'].sum())} / {int(t['есть_П'].sum())}"
+    report['жителей'] = int(round(t['pop'].sum()))
+    report['рабочих мест: основная оценка (А + Б)'] = int(round(t['jobs'].sum()))
+    report['рабочих мест: нижняя граница (только А)'] = int(round(t['jobs_A'].sum()))
+    report['K_ref — рабочих мест на жителя в среднем'] = round(float(t['jobs'].sum() / t['pop'].sum()), 3) if t['pop'].sum() > 0 else None
+    report['мест в школах / детских садах'] = f"{int(t['cap_school'].sum())} / {int(t['cap_kinder'].sum())}"
+    pts = {g: s.loc[s.group == g, ['x', 'y']].to_numpy() for g in ['метро', 'остановка']}
+    city = {'table': t, 'polys': list(blocks['polys']), 'geom': BlockGeometry(list(blocks['polys'])),
+            'orig': list(blocks['_g']), 'proj': L['frame']['proj'], 'pts': pts, 'report': report, 'epsg': L['epsg'],
+            'crs_notes': L.get('crs_notes', []), 'rules': 'v5'}
+    city['detail'] = {'buildings': bdf, 'bpolys': bpolys, 'services': s, 'services_all': L['services']}
     return city
 
 

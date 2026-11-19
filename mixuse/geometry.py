@@ -381,3 +381,19 @@ def to_frame(geoms, epsg, geographic, frame, name='слой'):
                        f'Перепроецируйте слой в QGIS в систему кварталов.')
     return _map_geoms(geoms, lambda r: lonlat_to_utm(utm_to_lonlat(r, *zs), *zt)), \
         f'«{name}»: {describe_crs(epsg, False)} → {describe_crs(frame["epsg"], False)}'
+
+
+# --- Округлость контура (правило 4.4, шаг 3): 4πS/P², где S — площадь, P — периметр внешнего контура;
+#     у круга 1, у квадрата 0,785. Число вершин — без повторённой замыкающей точки. QGIS: $area, $perimeter.
+def roundness(polys):
+    """Округлость и число вершин внешнего контура первого полигона здания."""
+    r = np.asarray(polys[0][0], float)
+    if len(r) > 1 and np.allclose(r[0], r[-1]):
+        closed = r
+        n = len(r) - 1
+    else:
+        closed = np.vstack([r, r[:1]])
+        n = len(r)
+    S = abs(ring_area(closed))
+    P = float(np.sum(np.hypot(np.diff(closed[:, 0]), np.diff(closed[:, 1]))))
+    return (4 * math.pi * S / P ** 2 if P > 0 else 0.0), n

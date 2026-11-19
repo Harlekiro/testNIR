@@ -67,3 +67,34 @@ def building_group(found, zone, rules):
     found — множество групп сервисов, найденных внутри контура.
     """
     return 'П' if 'П' in found else 'ОД' if 'ОД' in found else 'К' if 'К' in found else zone_group(zone, rules)
+
+
+def load_norms(path=None):
+    """Нормы площади на работника по типам сервисов (столбец «норма_м2_на_работника» таблицы групп, раздел 6).
+
+    Возвращает словарь «тип → м² на работника». Типы без нормы в словарь не входят.
+    """
+    path = path or DEFAULT_TABLE
+    t = pd.read_csv(path, sep=None, engine='python', encoding='utf-8-sig', dtype=str).fillna('')
+    t.columns = [c.strip() for c in t.columns]
+    if 'норма_м2_на_работника' not in t:
+        return {}
+    v = pd.to_numeric(t['норма_м2_на_работника'].str.replace(',', '.'), errors='coerce')
+    return {ty.strip(): float(n) for ty, n in zip(t['тип'], v) if n > 0}
+
+
+def main_norm(types, norms, fallback):
+    """Норма здания по типам сервисов в его контуре (правило 4.4.3).
+
+    Берётся норма типа, точек которого в здании больше; при равенстве — большая норма.
+    Тип без нормы → fallback(тип) — норма группы для вариантов (4.6.4).
+    Возвращает (норма, число типов без нормы среди учтённых).
+    """
+    cnt = {}
+    for ty in types:
+        cnt[ty] = cnt.get(ty, 0) + 1
+    top = max(cnt.values())
+    leaders = [ty for ty, c in cnt.items() if c == top]
+    vals = [(norms[ty], False) if ty in norms else (fallback(ty), True) for ty in leaders]
+    best = max(vals, key=lambda x: x[0])
+    return best[0], sum(1 for _, no in vals if no)

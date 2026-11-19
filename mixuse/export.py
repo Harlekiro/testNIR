@@ -120,3 +120,32 @@ def map_figure(city, det, show, R, title):
               loc='lower left', fontsize=9, frameon=False)
     ax.set_title(f'{title}: вариант {show}', fontsize=11)
     return fig
+
+
+def buildings_csv(city, path):
+    """Таблица зданий (results/<код>_здания.csv, правила v5): шаг таблицы 4.4, категория и рабочие места каждого здания,
+    координата точки на поверхности в системе координат кварталов — чтобы проверить правила на карте в QGIS
+    («Добавить слой из текста с разделителями», поля x и y)."""
+    d = city['detail']['buildings']
+    t = city['table']
+    proj = city['proj']
+    x, y = d['ix'].to_numpy(), d['iy'].to_numpy()
+    if proj:                                             # обратно в градусы
+        x, y = x / proj.kx + proj.lon0, y / proj.ky + proj.lat0
+    out = pd.DataFrame({
+        'block_id': t['block_id'].to_numpy()[d['block'].to_numpy()],
+        'x': np.round(x, 6 if proj else 1), 'y': np.round(y, 6 if proj else 1),
+        'жилое': d['living'].astype(int),
+        'этажность_не_указана': d['storeys_missing'].astype(int),
+        'площадь_застройки': d['footprint'].round(1),
+        'поэтажная_площадь': d['floor_area'].round(1),
+        'шаг_4_4': d['step'],
+        'категория': d['category'],
+        'рабочих_мест_А': d['jobs_A'].round(2),
+        'рабочих_мест_Б': d['jobs_B'].round(2),
+        'встроенные_К': d['bi_К'].round(1), 'встроенные_ОД': d['bi_ОД'].round(1),
+        'рабочих_мест_встроенных': d['jobs_builtin'].round(2),
+        'жителей': d['pop'].round(1),
+    })
+    out.to_csv(path, index=False, encoding='utf-8-sig')
+    return path

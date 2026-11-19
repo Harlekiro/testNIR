@@ -6,7 +6,7 @@ import os
 
 import yaml
 
-from .params import DEFAULTS, SCENARIOS
+from .params import DEFAULTS, SCENARIOS, defaults
 from .groups import load_group_table
 
 
@@ -34,14 +34,25 @@ def _yes_no(v, key):
     raise ConfigError(f'Параметр {key}: ожидается «да» или «нет», получено «{v}».')
 
 
-def merge_params(user):
-    """Параметры по умолчанию (params.DEFAULTS) + переопределения из настроек набора данных."""
-    P = dict(DEFAULTS)
+def merge_params(user, rules='v4'):
+    """Параметры по умолчанию для правил v4 или v5 (params.py) + переопределения из настроек набора данных."""
+    base = defaults(rules)
+    P = dict(base)
     for k, v in (user or {}).items():
-        if k not in DEFAULTS:
-            raise ConfigError(f'Неизвестный параметр «{k}». Допустимые: {", ".join(DEFAULTS)}.')
-        if isinstance(DEFAULTS[k], bool):
+        if k not in base:
+            raise ConfigError(f'Неизвестный параметр «{k}» для правил {rules}. Допустимые: {", ".join(base)}.')
+        d = base[k]
+        if isinstance(d, bool):
             P[k] = _yes_no(v, k)
+        elif isinstance(d, dict):              # нормы по типам: можно переопределить часть
+            if not isinstance(v, dict):
+                raise ConfigError(f'Параметр {k}: ожидается список «тип: число».')
+            P[k] = dict(d)
+            for kk, vv in v.items():
+                try:
+                    P[k][str(kk)] = float(vv)
+                except (TypeError, ValueError):
+                    raise ConfigError(f'Параметр {k}.{kk}: ожидается число, получено «{vv}».')
         else:
             try:
                 P[k] = float(v) if isinstance(v, str) else v
@@ -104,7 +115,7 @@ def finish_config(cfg, base, source):
         raise ConfigError(f'rules: «{cfg["rules"]}» — допустимо v4 (совместимость с ноутбуком v4) или v5.')
     cfg['fields'] = cfg.get('fields') or {}
     cfg.setdefault('capacity_field', 'capacity')
-    cfg['params'] = merge_params(cfg.get('params'))
+    cfg['params'] = merge_params(cfg.get('params'), cfg['rules'])
     src = cfg.get('param_sources') or {}
     if not isinstance(src, dict) or set(src) - set(cfg['params']):
         raise ConfigError('param_sources: источники значений параметров в виде «параметр: источник»; '
