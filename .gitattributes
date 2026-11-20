@@ -1,0 +1,2 @@
+# bat-файлы — с окончаниями строк Windows и в архиве ZIP с GitHub (cmd.exe ошибается на LF)
+*.bat text eol=crlf
