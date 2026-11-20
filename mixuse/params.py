@@ -41,6 +41,7 @@ DEFAULTS_V5.update(
         school=13.5, kindergarten=35, hospital=20, roddom=20,
         polyclinic=32, dentist=32, trauma=32, women_clinic=32, emergency=32),
     stat_jobs=None,           # внешнее число работников для проверки 4.8.4 (только spb_full: 1 472 900, Петростат, 2022)
+    n_school=120, n_kinder=61,   # запасной расчёт 4.7.3 — те же нормы, что в расчёте blocksnet (ТЗ 16.2; v4 — 110 и 60)
 )
 
 
@@ -99,7 +100,8 @@ PARAM_STATUS = {
     'prod_min_footprint_one_storey': 'калибровка по заводам Гатчины; проверка 500 и 2 000',
     'a_prod_one_storey': 'норма склада, раздел 6', 'a_prod_zone': 'среднее справочных значений производства',
     'a_business_zone': 'допущение, осторожнее офисной нормы', 'a_К': 'раздел 6', 'a_ОД': 'раздел 6', 'a_П': 'раздел 6',
-    'social_norms': 'NSW 2023', 'n_school': 'без регионального источника', 'n_kinder': 'без регионального источника',
+    'social_norms': 'NSW 2023', 'n_school': 'каталог blocksnet 1.0.0.dev1, как в разделе 12 (ТЗ 16.2); регионального источника нет',
+    'n_kinder': 'каталог blocksnet 1.0.0.dev1, как в разделе 12 (ТЗ 16.2); регионального источника нет',
 }
 
 PARAM_HELP = {
