@@ -125,3 +125,43 @@ def test_acceptance_as_user(code, tmp_path):
             same_strings(pd.read_csv(ref, encoding='utf-8-sig', **kw, **STR),
                          pd.read_csv(got, encoding='utf-8-sig', **kw, **STR))
     assert os.path.exists(os.path.join(prog, 'results', f'{code}_user_для_страницы.json'))
+
+
+def _form(**extra):
+    f = {'название': 'Тест', 'код': 'test', 'кварталы': {'файл': 'x.geojson'}, 'территория': [1]}
+    f.update(extra)
+    return f
+
+
+def test_form_kit_and_exact_fields():
+    """18.2: КИТ — значение с источником или строка табл. Б.1; точный расчёт — да / нет и файл OpenStreetMap."""
+    from mixuse.notebook import config_from_form
+    cfg = config_from_form(_form(кит={'значение': 1.4, 'источник': 'ПЗЗ'}), group_table=None, base=ROOT)
+    assert cfg['params']['kit'] == 1.4 and cfg['params']['kit_source'] == 'ПЗЗ'
+    assert cfg['provision'] == {'exact': 'auto', 'osm_file': None}
+    cfg = config_from_form(_form(кит={'строка_СП': 'zh_multi', 'источник': 'зона О-8', 'процент_застройки_ПЗЗ': 40,
+                                      'этажность_ПЗЗ': 3},
+                                 точный_расчёт={'включить': True, 'файл_OSM': 'https://example.org/r.osm.pbf'}),
+                           group_table=None, base=ROOT)
+    P = cfg['params']
+    assert (P['kit'], P['kit_sp_row'], P['pzz_build_share'], P['pzz_max_storeys']) == (None, 'zh_multi', 40, 3)
+    assert cfg['param_sources']['kit_sp_row'] == 'зона О-8'
+    assert cfg['provision'] == {'exact': True, 'osm_file': 'https://example.org/r.osm.pbf'}
+
+
+def test_form_errors_are_plain_messages():
+    """18.3: ошибки — «что не так и как исправить», в ноутбуке одной строкой «✕ …», без трассировки Python."""
+    from mixuse.notebook import config_from_form
+    from mixuse.blocks import DataError
+    from mixuse.config import ConfigError
+    from mixuse.compare import kit_value, KitError
+    with pytest.raises(DataError) as e:
+        config_from_form(_form(кит={'значение': 1.2, 'строка_СП': 'zh_multi'}), group_table=None, base=ROOT)
+    assert 'не оба сразу' in str(e.value)
+    assert e.value._render_traceback_()[0].startswith('✕ кит:')
+    with pytest.raises(ConfigError) as e:
+        config_from_form(_form(кит={'строка_СП': 'zh_mult'}), group_table=None, base=ROOT)
+    assert 'zh_multi' in str(e.value) and e.value._render_traceback_()[0].startswith('✕')
+    with pytest.raises(KitError) as e:
+        kit_value({'kit': None, 'kit_sp_row': None})
+    assert 'zh_low_mid — многоквартирные дома малой и средней этажности (0,8)' in str(e.value)
