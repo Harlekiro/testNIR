@@ -2,6 +2,7 @@
 
 Пути к слоям в файле настроек указываются относительно самого файла настроек.
 """
+from .errors import UserMessage
 import os
 
 import yaml
@@ -10,7 +11,7 @@ from .params import DEFAULTS, SCENARIOS, SCENARIOS_V5, defaults, TEXT_PARAMS, SP
 from .groups import load_group_table
 
 
-class ConfigError(ValueError):
+class ConfigError(UserMessage, ValueError):
     """Ошибка в файле настроек — сообщение для пользователя."""
 
 
@@ -19,7 +20,8 @@ _YES = {'да', 'yes', 'true', 'вкл', '1'}
 _NO = {'нет', 'no', 'false', 'выкл', '0'}
 _KNOWN_KEYS = {'name', 'title', 'mode', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field', 'zones',
                'zone_field', 'zone_rules', 'block_zone_field', 'count_prefix', 'capacity_prefix', 'fields',
-               'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'output', 'rules', 'param_sources', 'explore'}
+               'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'output', 'rules', 'param_sources', 'explore',
+               'provision'}
 RULES = ('v4', 'v5')   # правила расчёта: v4 — совместимость с ноутбуком v4; v5 — раздел 4 ТЗ (по умолчанию)
 
 
@@ -139,8 +141,24 @@ def finish_config(cfg, base, source):
         cfg['_groups'] = load_group_table(cfg.get('service_groups'))
     except (OSError, ValueError) as e:
         raise ConfigError(str(e))
+    cfg['provision'] = _provision(cfg.get('provision'), base)
     cfg['_path'] = source
     return cfg
+
+
+def _provision(raw, base):
+    """Раздел provision (ТЗ 18.2): точный расчёт школ и садов через blocksnet — exact: да / нет / auto
+    (auto — если данные города подготовлены и blocksnet есть); osm_file — файл региона OpenStreetMap (.osm.pbf)
+    или ссылка на него; если не задан — файлы из data/osm/."""
+    raw = raw or {}
+    if not isinstance(raw, dict) or set(raw) - {'exact', 'osm_file'}:
+        raise ConfigError('provision: ожидается «exact: да / нет / auto» и, по желанию, «osm_file: путь или ссылка».')
+    ex = raw.get('exact', 'auto')
+    ex = 'auto' if ex is None or str(ex).strip().lower() == 'auto' else _yes_no(ex, 'provision.exact')
+    f = raw.get('osm_file')
+    if f and not str(f).startswith(('http://', 'https://')):
+        f = os.path.normpath(os.path.join(base, str(f)))
+    return {'exact': ex, 'osm_file': f or None}
 
 
 __all__ = ['load_config', 'finish_config', 'merge_params', 'ConfigError']

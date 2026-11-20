@@ -7,6 +7,7 @@
 координат к системе кварталов и счётчики допущений в отчёте.
 Номера формул по `docs/метод.md` — [НУЖЕН ФАЙЛ: сверить, когда автор пришлёт документ].
 """
+from .errors import UserMessage
 import os
 from collections import defaultdict
 
@@ -18,7 +19,7 @@ from .geometry import (read_layer, LocalProjection, project, poly_area, centroid
 from .groups import FUNCS, NOT_IN_TABLE, zone_group, building_group
 
 
-class DataError(ValueError):
+class DataError(UserMessage, ValueError):
     """Ошибка во входных данных — сообщение для пользователя."""
 
 

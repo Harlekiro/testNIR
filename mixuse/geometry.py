@@ -5,6 +5,7 @@
 полигонов. Новое в этом файле — только приведение слоёв в разных системах координат к одной
 (раздел «Системы координат» в конце), в ноутбуке его не было.
 """
+from .errors import UserMessage
 import json, os, re, sqlite3, struct, math
 from collections import defaultdict
 import numpy as np
@@ -254,7 +255,7 @@ def dist_points_to_polys(pts, polys):
 # QGIS: «Перепроецировать слой». EPSG:3857 запрещён: в нём площади и расстояния искажены.
 # ================================================================================================
 
-class CRSError(ValueError):
+class CRSError(UserMessage, ValueError):
     """Слои нельзя привести к одной системе координат."""
 
 

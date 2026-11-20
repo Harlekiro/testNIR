@@ -10,6 +10,7 @@ from .params import defaults
 from .checks import check_config
 from .blocks import DataError
 
+_KIT_KEYS = {'значение', 'источник', 'строка_СП', 'процент_застройки_ПЗЗ', 'этажность_ПЗЗ'}
 _MODES = {'слои': 'layers', 'таблица': 'table', 'layers': 'layers', 'table': 'table'}
 
 
@@ -31,6 +32,27 @@ def config_from_form(form, P=None, SCN=None, group_table=None, base=None):
         base_P = defaults(rules)
         P = {k: v for k, v in (P or {}).items() if k not in base_P or v != base_P[k]}
         P.update(form.get('параметры') or {})
+    src = dict(form.get('источники') or {})
+    kit = form.get('кит') or {}                            # ТЗ 18.2: КИТ — значение и источник или строка табл. Б.1
+    if set(kit) - _KIT_KEYS:
+        raise DataError(f'кит: неизвестные поля {sorted(set(kit) - _KIT_KEYS)}; допустимо {sorted(_KIT_KEYS)}.')
+    if kit and rules != 'v4':
+        if kit.get('значение') is not None and kit.get('строка_СП'):
+            raise DataError('кит: укажите либо значение КИТ из ПЗЗ (значение), либо строку таблицы Б.1 СП 42.13330.2016 '
+                            '(строка_СП) — не оба сразу.')
+        for k_form, k in (('значение', 'kit'), ('строка_СП', 'kit_sp_row'),
+                          ('процент_застройки_ПЗЗ', 'pzz_build_share'), ('этажность_ПЗЗ', 'pzz_max_storeys')):
+            if kit.get(k_form) is not None:
+                P[k] = kit[k_form]
+        if kit.get('источник'):
+            if kit.get('значение') is not None:
+                P['kit_source'] = kit['источник']
+            elif kit.get('строка_СП'):
+                src['kit_sp_row'] = kit['источник']
+    ex = form.get('точный_расчёт') or {}                   # ТЗ 18.2: точный расчёт школ и садов (blocksnet)
+    if set(ex) - {'включить', 'файл_OSM'}:
+        raise DataError(f'точный_расчёт: неизвестные поля {sorted(set(ex) - {"включить", "файл_OSM"})}; '
+                        'допустимо «включить» (True / False) и «файл_OSM» (путь или ссылка).')
     q = form.get('кварталы') or {}
     b = form.get('здания') or {}
     s = form.get('сервисы') or {}
@@ -48,11 +70,13 @@ def config_from_form(form, P=None, SCN=None, group_table=None, base=None):
         'block_id_field': q.get('поле_номера'),
         'territory': list(form.get('территория') or []),
         'params': dict(P or {}),
-        'param_sources': dict(form.get('источники') or {}),
+        'param_sources': src,
         'service_groups': group_table,
     }
     if SCN:
         cfg['scenarios'] = dict(SCN)
+    if ex:
+        cfg['provision'] = {'exact': bool(ex.get('включить')), 'osm_file': ex.get('файл_OSM')}
     if mode == 'layers':
         cfg.update({
             'buildings': b.get('файл'),
@@ -97,3 +121,28 @@ def print_check(cfg):
                         "Чтобы проверить ноутбук на примере, поставьте ПРИМЕР = 'spb'.")
     print(f'Проверка пройдена. Предупреждений: {len(warns)}. Можно запускать расчёт.')
     return warns
+
+
+def check_data(cfg):
+    """Шаг 0б целиком (ТЗ 18.3): проверка анкеты и слоёв (print_check), затем слои читаются, таблица кварталов
+    строится и печатается отчёт о данных простыми словами — доля зданий без этажности, типы сервисов не из таблицы
+    групп, школы и сады без мест, производственные кварталы без точек предприятий, кварталы с П, КИТ и его источник.
+    Ошибки печатаются строкой «✕ что не так и как исправить» и останавливают расчёт. Возвращает (слои, город)."""
+    from .blocks import load_layers, build_table
+    from .data_report import data_report
+    print_check(cfg)
+    P = cfg['params']
+    if cfg['rules'] == 'v5':
+        from .compare import kit_value
+        kit_value(P)                                   # КИТ не задан — ошибка сразу, до расчёта
+    L = load_layers(cfg, cfg['_groups'])
+    city = build_table(L, cfg, P, cfg['_groups'])
+    lines, warns = data_report(city, cfg, P)
+    print('Что нашлось в данных:')
+    for m in lines:
+        if m.strip():
+            print(('      ' if m.startswith(' ') else '  ✓ ') + m.strip())
+    for m in warns:
+        print('  ! ' + m)
+    print()
+    return L, city

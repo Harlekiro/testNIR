@@ -4,6 +4,7 @@
 территории, параметры и варианты; на выходе — таблица сравнения. Файлы не читаются и не пишутся.
 Сводного балла и порядка вариантов нет.
 """
+from .errors import UserMessage
 import numpy as np
 import pandas as pd
 
@@ -12,7 +13,7 @@ from .groups import FUNCS
 from .scenarios import normalize
 
 
-class TerritoryError(ValueError):
+class TerritoryError(UserMessage, ValueError):
     """Территория задана неверно — сообщение для пользователя."""
 
 
@@ -125,7 +126,7 @@ def compare(city, T_ids, P, SCN, prov=None):
 GROUP_WORDS = {'К': 'торговле и услугам', 'ОД': 'общественно-деловой функции'}
 
 
-class KitError(ValueError):
+class KitError(UserMessage, ValueError):
     """КИТ варианта не задан — сообщение для пользователя."""
 
 
@@ -151,17 +152,7 @@ def choose_kit(t, E, P):
     if n and t['n_bld_default'].iloc[E].sum() / n > 0.5:
         warns.append(f'У {100 * t["n_bld_default"].iloc[E].sum() / n:.0f} % зданий окружения этажность не указана и принята '
                      'по умолчанию (4.2.2): КИТ окружения по данным занижен.')
-    if P.get('kit') is not None:
-        kit = float(P['kit'])
-        source = 'пользователь: ' + (P.get('kit_source') or 'ПЗЗ или проект планировки (источник не указан)')
-    elif P.get('kit_sp_row'):
-        name, kit = SP42_B1[P['kit_sp_row']]
-        source = f'свод правил: {SP42_NAME}, строка «{name}» ({P["kit_sp_row"]})'
-    else:
-        raise KitError('КИТ варианта не задан (правило 4.6.2). Укажите в настройках набора КИТ из ПЗЗ или проекта '
-                       'планировки (params: kit, kit_source) или, если в ПЗЗ его нет, строку таблицы Б.1 '
-                       'СП 42.13330.2016 по типу зоны, в которую переводится территория (params: kit_sp_row), '
-                       'например zh_low_mid. КИТ окружения по данным основным значением быть не может.')
+    kit, source = kit_value(P)
     share, storeys = P.get('pzz_build_share'), P.get('pzz_max_storeys')
     if share and storeys:
         share = share / 100 if share > 1 else share          # 40 % или 0,4
@@ -170,6 +161,22 @@ def choose_kit(t, E, P):
             warns.append(f'КИТ варианта {kit:.2f} больше предела по ПЗЗ {lim:.2f} (процент застройки {100 * share:.0f} % × '
                          f'{storeys:g} этажей, 4.6.2, п. 3).')
     return kit, source, kitE, warns
+
+
+def kit_value(P):
+    """КИТ варианта и его источник по правилу 4.6.2 (п. 1–2): значение пользователя или строка табл. Б.1."""
+    from .params import SP42_B1, SP42_NAME
+    if P.get('kit') is not None:
+        return float(P['kit']), 'пользователь: ' + (P.get('kit_source') or 'ПЗЗ или проект планировки (источник не указан)')
+    if P.get('kit_sp_row'):
+        name, kit = SP42_B1[P['kit_sp_row']]
+        return kit, f'свод правил: {SP42_NAME}, строка «{name}» ({P["kit_sp_row"]})'
+    rows = '; '.join(f'{k} — {n} ({v:g})'.replace('.', ',') for k, (n, v) in SP42_B1.items())
+    raise KitError('КИТ варианта не задан (правило 4.6.2). Укажите КИТ из ПЗЗ или проекта планировки и его источник '
+                   '(анкета: кит=dict(значение=…, источник=…); файл настроек: params kit, kit_source) или, если в ПЗЗ '
+                   'его нет, строку таблицы Б.1 СП 42.13330.2016 по зоне, в которую переводится территория '
+                   f'(анкета: кит=dict(строка_СП=…); файл настроек: params kit_sp_row). Строки: {rows}. '
+                   'КИТ окружения по данным основным значением быть не может.')
 
 
 def kit_line(kit, kitE):

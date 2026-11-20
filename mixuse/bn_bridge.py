@@ -7,7 +7,9 @@
      выполняется там: программа сама передаёт ему данные и забирает результат;
   3. есть сохранённый точный расчёт «как есть» (data/<код>/access/provision_walk.json) — оценка (provision_estimate);
   4. иначе — запасной расчёт 4.7.3 (prov = None).
-Переменная MIXUSE_PROVISION: auto (по умолчанию), estimate — только оценка, fallback — только запасной расчёт.
+Настройки provision.exact (анкета ноутбука «точный_расчёт», ТЗ 18.2): нет — сразу запасной расчёт; да — если данные
+города для blocksnet ещё не подготовлены, программа готовит их сама (prepare: граф, матрица, расчёт «как есть»);
+auto (по умолчанию в YAML) — как в пунктах 1–4. Переменная MIXUSE_PROVISION (auto, estimate, fallback) важнее настроек.
 Модуль не импортирует blocksnet.
 """
 import json
@@ -32,7 +34,7 @@ def blocksnet_python():
 
 _CFG_KEYS = ('name', 'title', 'mode', 'rules', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field',
              'zones', 'zone_field', 'zone_rules', 'block_zone_field', 'count_prefix', 'capacity_prefix', 'fields',
-             'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'param_sources')
+             'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'param_sources', 'provision')
 
 
 def _plain(v):
@@ -75,14 +77,72 @@ def delegate(cfg, T_ids, E_ids, values, near=None, timeout=3600):
         return json.load(open(out_path, encoding='utf-8'))
 
 
+def save_config(cfg, root=None):
+    """Настройки анкеты → configs/анкета_<код>.yaml (пути абсолютные): по ним работают команды access, provision
+    и подготовить_город.bat. Возвращает путь."""
+    root = root or os.getcwd()
+    raw = {k: _plain(cfg[k]) for k in _CFG_KEYS if cfg.get(k) is not None}
+    path = os.path.join(root, 'configs', f'анкета_{cfg["name"]}.yaml')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('# Настройки, собранные ноутбуком из анкеты шага 0 (перезаписываются при каждом запуске).' + chr(10))
+        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+    return path
+
+
+def prepare(cfg, city, say=print):
+    """Точный расчёт включён (provision.exact = да): готовит данные города для blocksnet, если их ещё нет —
+    файл OpenStreetMap (скачивает по ссылке), пешеходный граф и матрица доступности (access), точный расчёт
+    «как есть» (provision). Выполняется в отдельном окружении с blocksnet; один раз на город."""
+    from .provision_bn import BlocksnetError
+    from .provision_estimate import load_page_data
+    try:
+        if load_page_data(cfg, city) is not None:
+            return
+    except ValueError:
+        pass                                   # данные устарели (слои изменились) — подготовить заново
+    root = os.getcwd() if not str(cfg.get('_path', '')).endswith('.yaml') else os.path.dirname(os.path.dirname(cfg['_path']))
+    cfg_path = cfg['_path'] if str(cfg.get('_path', '')).endswith('.yaml') else save_config(cfg, root)
+    py = blocksnet_python()
+    if not py:
+        raise BlocksnetError('Точный расчёт школ и садов включён, но окружения с blocksnet нет. Дважды щёлкните '
+                             'подготовить_город.bat в папке программы (один раз: ставит blocksnet и готовит данные города '
+                             f'по настройкам {os.path.relpath(cfg_path, root)}) и выполните ноутбук снова — '
+                             'или выключите точный расчёт в анкете (точный_расчёт: включить=False).')
+    osm = (cfg.get('provision') or {}).get('osm_file')
+    if osm and osm.startswith(('http://', 'https://')):
+        from .osm_files import download
+        path = os.path.join(root, 'data', 'osm', osm.rstrip('/').split('/')[-1])
+        if not os.path.exists(path):
+            say(f'Школы и сады: скачиваю файл OpenStreetMap {osm} (с докачкой)…')
+            download(osm, path, say=say)
+        osm = path
+    env = dict(os.environ, PYTHONIOENCODING='utf-8')
+    pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env['PYTHONPATH'] = pkg + os.pathsep + env.get('PYTHONPATH', '')
+    steps = [('граф и матрица доступности (один раз на город; от минуты до часа)',
+              ['access', cfg_path, '--retries', '0'] + (['--osm-file', osm] if osm else [])),
+             ('точный расчёт «как есть»', ['provision', cfg_path])]
+    for title, args in steps:
+        say(f'Школы и сады: {title}…')
+        r = subprocess.run([py, '-m', 'mixuse'] + args, capture_output=True, env=env, cwd=root)
+        if r.returncode != 0:
+            tail = (r.stdout + r.stderr).decode('utf-8', 'replace').strip().splitlines()[-3:]
+            raise BlocksnetError(f'Подготовка данных для blocksnet не удалась ({title}): ' + ' / '.join(tail))
+
+
 def school_provision(cfg, city, T_ids, det, near=None, say=print):
     """Выбирает способ расчёта школ и садов (1–4). Возвращает (prov или None, пояснение для отчёта)."""
     t = city['table']
     E_ids = t['block_id'].iloc[det['E']].astype(int).tolist()
     notes = []
-    mode = os.environ.get('MIXUSE_PROVISION', 'auto')      # auto | estimate | fallback (тесты эталонов — fallback)
+    exact = (cfg.get('provision') or {}).get('exact', 'auto')
+    mode = os.environ.get('MIXUSE_PROVISION') or ('fallback' if exact is False else 'auto')   # тесты эталонов — fallback
     if mode == 'fallback':
-        return None, 'Школы и сады — запасной расчёт 4.7.3 (MIXUSE_PROVISION=fallback).'
+        why = 'MIXUSE_PROVISION=fallback' if os.environ.get('MIXUSE_PROVISION') else 'точный расчёт выключен в анкете'
+        return None, f'Школы и сады — запасной расчёт 4.7.3 ({why}).'
+    if exact is True and mode == 'auto':
+        prepare(cfg, city, say=say)
     from . import provision_bn as pb
     try:                                                                     # 1. blocksnet здесь
         if mode == 'estimate':

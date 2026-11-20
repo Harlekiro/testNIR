@@ -12,6 +12,7 @@
     (версия blocksnet, вид графа, число кварталов, контрольная сумма слоя кварталов), по которому
     load_matrix проверяет, что матрица построена на тех же кварталах.
 """
+from .errors import UserMessage
 import hashlib
 import json
 import os
@@ -26,7 +27,7 @@ GRAPH_TYPE = 'walk'                   # решение автора 19.11.2026: 
 OVERPASS_URLS = ['https://overpass-api.de/api', 'https://overpass.kumi.systems/api', 'https://overpass.private.coffee/api']
 
 
-class BlocksnetError(RuntimeError):
+class BlocksnetError(UserMessage, RuntimeError):
     """blocksnet не установлен или матрица не подходит — сообщение для пользователя."""
 
 

@@ -284,7 +284,7 @@ def cmd_access(args):
     cfg = load_config(args.config)
     try:
         from .provision_bn import default_osm_file
-        osm = None if args.osm_file == 'нет' else (args.osm_file or default_osm_file(cfg))
+        osm = None if args.osm_file == 'нет' else (args.osm_file or _config_osm(cfg) or default_osm_file(cfg))
         mx, meta = build_matrix(cfg, graph_type=args.graph, retries=args.retries, say=_say, osm_file=osm)
     except BlocksnetError as e:
         raise ConfigError(str(e))
@@ -370,10 +370,37 @@ def cmd_provision_variants(args):
     return 0
 
 
+def _config_osm(cfg):
+    """Файл OpenStreetMap из настроек (provision.osm_file, анкета ноутбука «файл_OSM»): ссылка — скачать в data/osm/."""
+    f = (cfg.get('provision') or {}).get('osm_file')
+    if f and f.startswith(('http://', 'https://')):
+        from .osm_files import download
+        root = os.path.dirname(os.path.dirname(cfg['_path'])) if str(cfg.get('_path', '')).endswith('.yaml') else os.getcwd()
+        path = os.path.join(root, 'data', 'osm', f.rstrip('/').split('/')[-1])
+        if not os.path.exists(path):
+            _say(f'Скачиваю файл OpenStreetMap {f} (с докачкой)…')
+            download(f, path, say=_say)
+        return path
+    return f
+
+
 def cmd_osm_download(args):
-    """Пункт 5: файлы регионов OpenStreetMap в data/osm/ (с докачкой) — для графа без сервера Overpass."""
+    """Пункт 5: файлы регионов OpenStreetMap в data/osm/ (с докачкой) — для графа без сервера Overpass.
+    С --config: файл из настроек (provision.osm_file); если его нет и в data/osm/ уже есть файлы — ничего не качает;
+    иначе — регионы по умолчанию (Санкт-Петербург, Ленинградская область)."""
     from .osm_files import fetch, DEFAULT
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if args.config and not args.region:
+        cfg = load_config(args.config)
+        f = _config_osm(cfg)
+        if f:
+            _say(f'Файл OpenStreetMap из настроек: {f}')
+            return 0
+        from .provision_bn import default_osm_file
+        have = default_osm_file(cfg)
+        if have:
+            _say('Файлы OpenStreetMap уже есть: ' + ', '.join(os.path.basename(x) for x in have))
+            return 0
     paths = fetch(root, args.region or DEFAULT, say=_say)
     _say('Файлы регионов:'); [_say('  ' + p) for p in paths]
     return 0
@@ -438,6 +465,7 @@ def build_parser():
     pvv.set_defaults(fn=cmd_provision_variants)
     od = sub.add_parser('osm-download', help='скачать файлы регионов OpenStreetMap в data/osm/ (граф без сервера Overpass)')
     od.add_argument('--region', action='append', help='saint_petersburg, leningrad_oblast (по умолчанию — оба)')
+    od.add_argument('--config', help='файл настроек: взять файл OpenStreetMap из них или из data/osm/, если он там уже есть')
     od.set_defaults(fn=cmd_osm_download)
     return p
 

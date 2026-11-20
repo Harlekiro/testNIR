@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from .geometry import assign_points
-from .groups import zone_group
+from .groups import zone_group, NOT_IN_TABLE
 
 SERVICE_GROUPS = ('К', 'ОД', 'П', 'школа', 'детский_сад')   # «сервис в контуре» для подсказки 4.9.1
 MAX_LISTED = 15                                             # сколько точек П вне нежилых зданий показывать поимённо
@@ -37,11 +37,24 @@ def data_report(city, cfg, P):
             warns.append(f'Кварталов территории {miss} нет в слое кварталов.')
     if P.get('data_note'):                    # ограничение территории, которое программа не проверяет (ТЗ 17)
         lines.append(f'Ограничение территории (программой не проверяется): {P["data_note"]}')
+    if cfg.get('rules', 'v5') == 'v5':        # ТЗ 18.3: КИТ и его источник
+        from .compare import kit_value, KitError
+        try:
+            kit, src = kit_value(P)
+            lines.append(f'КИТ варианта: {kit:g} — {src}'.replace('.', ',', 1))
+        except KitError as e:
+            warns.append(str(e))
     det = city.get('detail')
     if det is None:
         lines.append('Режим «таблица»: слоёв зданий и сервисов нет, отчёт о зданиях не составляется.')
         return lines, warns
     b, bpolys, s = det['buildings'], det['bpolys'], det['services']
+    sa = det.get('services_all')
+    if sa is not None and 'group' in sa:      # ТЗ 18.3: типы не из таблицы групп — с числом объектов
+        miss = sa.loc[sa.group == NOT_IN_TABLE, 'service_type'].value_counts()
+        if len(miss):
+            lines.append('Типы сервисов, которых нет в таблице групп (не учитываются): '
+                         + ', '.join(f'{k} — {v}' for k, v in miss.items()))
     nonres = ~b['living']
     big = nonres & (b['footprint'] >= P['S_min'])
 
@@ -127,6 +140,9 @@ def data_report(city, cfg, P):
     lines.append(f'Производственные зоны: поэтажная площадь нежилых зданий от S_min — {fa_P:,.0f} м²; '
                  f'из неё в одноэтажных без сервиса в контуре — {fa_one:,.0f} м² ({100 * fa_one / fa_P if fa_P else 0:.0f} %)'.replace(',', ' '))
     lines.append(f'Производственных кварталов без точек П: {nP_no} из {nP}')
+    kP = city.get('report', {}).get('кварталов с П: по сервисам / по зданиям шагов 4–5 / всего')
+    if kP:
+        lines.append(f'Кварталов с функцией П: по сервисам / по зданиям производственных зон (шаги 4–5) / всего — {kP}')
     if nP and nP_no:
         warns.append(f'В {nP_no} из {nP} производственных кварталов нет точек предприятий (группа П). Одноэтажный цех '
                      'меньше 1 000 м² без точки будет считаться хозпостройкой (подсказка 4.9.1): добавьте точки предприятий.')
