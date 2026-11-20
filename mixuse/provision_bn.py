@@ -310,6 +310,7 @@ def as_is_report(cfg, city, mx, T_ids, R=None, factors=(0.5, 1.0, 1.5)):
             need = (popE + popT) * n / 1000
             fb[norm_name] = 100 * capET / need if need > 0 else None
         limit = min(100.0, 100 * cap_all / dem_all) if dem_all else None
+        # 12.8: если мест в данных меньше потребности по норме — это ограничение данных, а не результат варианта
         sens = {}
         for f in factors:
             r2, _ = provision(city, mx, name, factor=f) if f != 1.0 else (res, st)
@@ -318,7 +319,8 @@ def as_is_report(cfg, city, mx, T_ids, R=None, factors=(0.5, 1.0, 1.5)):
             'учреждения': label, 'мест на 1000 жителей': st['demand'], 'порог, мин': st['accessibility'],
             'граф': GRAPH_TYPE, 'max_depth': MAX_DEPTH,
             'учреждений без мест (подставлено мест)': f"{st['учреждений без мест (подставлено)']} ({st['impute_capacity']})",
-            'мест всего': cap_all, 'спрос всего': dem_all,
+            'мест в данных (без подставленных)': int(t[col].sum()),
+            'мест всего (с подставленными)': cap_all, 'потребность по норме, весь набор': dem_all,
             'весь набор: в пределах доступности, %': _r(all_in), 'весь набор: получили место вообще, %': _r(all_any),
             'проверка 12.8: не больше min(100 %; места ÷ спрос), %': _r(limit),
             'окружение: спрос': dem_env,
