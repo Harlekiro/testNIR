@@ -33,9 +33,9 @@ const res=[];
 for(const job of A){
   const idx=new Map(B.map((b,i)=>[b.id,i]));const T=job.territory.map(id=>idx.get(id));
   const r=calc(D,B,T,D.params,D.scenarios,job.kit);
-  const out={};for(const [n,o] of Object.entries(r.out))out[n]={N:o.N,J:o.J,K:o.K,KA:o.KA,Kall:o.Kall,Jcity:o.Jcity,acc:o.acc,
+  const out={};for(const [n,o] of Object.entries(r.out))out[n]={N:o.N,J:o.J,K:o.K,KA:o.KA,Kall:o.Kall,Jcity:o.Jcity,Ncity:o.Ncity,acc:o.acc,
     sP:o.sP,kP:o.kP,sT:o.sT,kT:o.kT,sNo:o.sNo,kNo:o.kNo,prov:o.prov||null,
-    concl:n==='Как есть'?null:conclusion(o,r.out['Как есть'])};
+    concl:n==='Как есть'?null:conclusion(o,r.out['Как есть'],D.params)};
   res.push({kit:r.kit,kitE:r.kitE,E:r.E.map(i=>B[i].id),out});
 }
 process.stdout.write(JSON.stringify(res));
@@ -97,7 +97,7 @@ def test_page_equals_package(code, tmp_path):
         assert pg['kitE'] == pytest.approx(info['КИТ окружения по данным (для сравнения)'], abs=0.006)
         for name, o in det['values'].items():
             q = pg['out'][name]
-            for key in ('N', 'J', 'K', 'KA', 'Kall', 'Jcity', 'sT', 'kT', 'sNo', 'kNo'):
+            for key in ('N', 'J', 'K', 'KA', 'Kall', 'Jcity', 'Ncity', 'sT', 'kT', 'sNo', 'kNo'):
                 assert q[key] == pytest.approx(o[key], rel=1e-3, abs=0.01), (T, name, key)
             for g in ('К', 'ОД', 'П'):
                 if o['acc']:

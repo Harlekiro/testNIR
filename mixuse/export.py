@@ -184,7 +184,7 @@ def web_json_v5(city, cfg, path, pdat=None, clip=None):
             'g': [[np.round(r, 2).tolist() for r in p] for p in city['polys'][k]],
         })
     params = {k: P.get(k) for k in ('kit', 'kit_source', 'kit_sp_row', 'R', 'r', 'q', 'k_liv', 'a_К', 'a_ОД', 'a_П',
-                                    'n_school', 'n_kinder')}
+                                    'n_school', 'n_kinder', 'compare_city', 'housing_note')}
     web = {'format': 'konstruktor-smeshannosti', 'format_version': 2, 'rules': 'v5',
            'name': cfg.get('title') or cfg['name'], 'code': cfg['name'], 'territory': T_ids,
            'totals': {'pop': float(t['pop'].sum()), 'jobs': float(t['jobs'].sum()), 'jobsA': float(t['jobs_A'].sum())},

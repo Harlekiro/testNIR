@@ -35,6 +35,8 @@ def data_report(city, cfg, P):
         lines.append(f'Территория: кварталы {T}' + (f'; нет в слое кварталов: {miss}' if miss else ''))
         if miss:
             warns.append(f'Кварталов территории {miss} нет в слое кварталов.')
+    if P.get('data_note'):                    # ограничение территории, которое программа не проверяет (ТЗ 17)
+        lines.append(f'Ограничение территории (программой не проверяется): {P["data_note"]}')
     det = city.get('detail')
     if det is None:
         lines.append('Режим «таблица»: слоёв зданий и сервисов нет, отчёт о зданиях не составляется.')

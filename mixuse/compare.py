@@ -242,6 +242,7 @@ def compare_v5(city, T_ids, P, SCN, prov=None):
         out[name] = dict(N=N, J=J, J_A=J_A, d=d, dJ=None if d is None else J - jobsT0, acc=acc,
                          K=(jobsE + J) / (popE + N), KA=(jobsE_A + J_A) / (popE + N),
                          Kall=(jobsA - jobsT0 + J) / (popA - popT0 + N), Jcity=100 * J / jobsA if jobsA else 0.0,
+                         Ncity=100 * N / popA if popA else 0.0,
                          sT=N * P['n_school'] / 1000, kT=N * P['n_kinder'] / 1000,
                          sP=100 * capS / nS if nS > 0 else None, kP=100 * capK / nK if nK > 0 else None,
                          sNo=max(0.0, N * P['n_school'] / 1000 - freeS), kNo=max(0.0, N * P['n_kinder'] / 1000 - freeK))
@@ -251,9 +252,9 @@ def compare_v5(city, T_ids, P, SCN, prov=None):
             s_, k_ = prov[n]['school'], prov[n]['kindergarten']
             out[n].update(prov=prov[n], sP=s_['env_in'], kP=k_['env_in'], sT=s_['children'], kT=k_['children'],
                           sNo=s_['children'] - s_['provided'], kNo=k_['children'] - k_['provided'])
-    full = pd.DataFrame({n: detailed_column(out[n]) for n in names})
+    full = pd.DataFrame({n: detailed_column(out[n], city=P.get('compare_city')) for n in names})
     short = pd.DataFrame({n: short_column(out[n], out) for n in names})
-    concl = {n: conclusion(out[n], out['Как есть']) for n in names[1:]}
+    concl = {n: conclusion(out[n], out['Как есть'], P) for n in names[1:]}
     short.loc['Вывод'] = ['—'] + [concl[n] for n in names[1:]]
     info = {'кварталов на территории': len(T), 'площадь территории, га': round(float(S) / 1e4, 1),
             'КИТ варианта': kit, 'КИТ: откуда': kit_from,
@@ -284,14 +285,16 @@ def _acc(o, g):
     return '—' if o['d'] is None else f"+{fmt(o['acc'][g][0])} / −{fmt(o['acc'][g][1])}"
 
 
-def detailed_column(o):
-    """Подробная таблица (results/<код>_сравнение_подробно.csv): строки 4.7.1–4.7.3, как на демо-странице."""
+def detailed_column(o, city=False):
+    """Подробная таблица (results/<код>_сравнение_подробно.csv): строки 4.7.1–4.7.3, как на демо-странице.
+    city — сравнение с городом целиком (параметр compare_city, ТЗ 17): строка «N, % жителей всего набора»."""
     now = o['d'] is None
     return {
         'Жители на территории N': int(round(o['N'])), 'Рабочие места на территории J': int(round(o['J'])),
         'Изменение рабочих мест к нынешним': '—' if now else int(round(o['dJ'])),
         'Доля нежилых площадей, %': '' if now else round(100 * (1 - o['d']['Ж'])),
         'J, % рабочих мест всего набора': round(o['Jcity'], 1),
+        **({'N, % жителей всего набора': round(o['Ncity'], 1)} if city else {}),
         'K окружения': round(float(o['K']), 2), 'K окружения, нижняя граница': round(float(o['KA']), 2),
         'Рабочие места на территории J, нижняя граница': int(round(o['J_A'])),
         'K по всем данным': round(float(o['Kall']), 3),
@@ -348,14 +351,23 @@ def short_column(o, out):
     }
 
 
-def conclusion(o, base):
-    """Вывод (4.7.0): фразы по порядку, без оценок «лучше / хуже» и без сравнения вариантов между собой."""
+def _word(d):
+    return 'почти без изменений' if abs(d) < 0.03 else ('больше' if d > 0 else 'меньше')
+
+
+def conclusion(o, base, P=None):
+    """Вывод (4.7.0): фразы по порядку, без оценок «лучше / хуже» и без сравнения вариантов между собой.
+    P['compare_city'] — после окружения сравнение с городом целиком (ТЗ 17, малый город);
+    P['housing_note'] — примечание в конце вывода для вариантов с жильём (ТЗ 17)."""
+    P = P or {}
     t = [f"Новых жителей — {fmt(o['N'])}, рабочих мест — {fmt(o['J'])}" if round(o['N']) > 0
          else f"Жилья нет, рабочих мест — {fmt(o['J'])}"]
     t.append(f"к нынешним рабочим местам {'+' if o['dJ'] >= 0 else '−'}{fmt(abs(o['dJ']))}")
-    dK = o['K'] - base['K']
-    word = 'почти без изменений' if abs(dK) < 0.03 else ('больше' if dK > 0 else 'меньше')
-    t.append(f"рабочих мест на жителя в окружении {word}: {base['K']:.2f} → {o['K']:.2f}")
+    t.append(f"рабочих мест на жителя в окружении {_word(o['K'] - base['K'])}: {base['K']:.2f} → {o['K']:.2f}")
+    if P.get('compare_city'):
+        t.append(f"рабочих мест на жителя по городу целиком {_word(o['Kall'] - base['Kall'])}: {base['Kall']:.2f} → {o['Kall']:.2f}; "
+                 f"рабочие места территории — {fmt(o['Jcity'])} % рабочих мест города"
+                 + (f", жители — {fmt(o['Ncity'])} % жителей города" if round(o['N']) > 0 else ''))
     ch = []
     for g in ('К', 'ОД'):
         a, c = o['acc'][g]
@@ -373,4 +385,6 @@ def conclusion(o, base):
         sN, kN = round(o['sNo']), round(o['kNo'])
         t.append(f'без свободного места в окружении: школьники — {fmt(sN)}, дошкольники — {fmt(kN)}' if sN + kN > 0
                  else 'свободных мест в школах и садах окружения хватает')
+    if P.get('housing_note') and round(o['N']) > 0:
+        t.append(P['housing_note'])
     return '; '.join(t) + '.'

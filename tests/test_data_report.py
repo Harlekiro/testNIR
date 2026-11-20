@@ -121,7 +121,7 @@ def test_v5_configs_pass_check(code):
     if code == 'spb_full':
         assert cfg['params']['kit'] == 1.4 and 'ПЗЗ' in cfg['params']['kit_source']
     else:
-        assert cfg['params']['kit_sp_row'] == 'zh_low_mid'          # 4.6.2: до решения автора о зоне ПЗЗ
+        assert cfg['params']['kit_sp_row'] == {'gatchina_layers': 'zh_multi', 'vysotsk': 'zh_low_mid'}[code]   # ТЗ 17
     err, warn, info = check_config(cfg)
     assert not err, err
     assert not any('разных системах' in w for w in warn)
