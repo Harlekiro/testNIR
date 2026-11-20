@@ -135,47 +135,57 @@ const nf=(v,d=0)=>{const s=Math.abs(v).toFixed(d).split('.');s[0]=s[0].replace(/
 const fmt=(v,d=0)=>v===''||v==null?'':(typeof v==='string'?v:nf(d===0?pyRound(v):v,d));
 
 // Оценка обеспеченности (provision_estimate.estimate): правила 1–6 — см. описание модуля в пакете.
-function takeFar(list,need){const got=[];for(const it of list){if(need<=0)break;const y=Math.min(need,it[2]);if(y>0){it[2]-=y;need-=y;got.push([it[1],y]);}}return got;}
+// Очередь пар «квартал → учреждение» — по весу «дети ÷ (время + 1)», как в blocksnet; при нехватке мест квартал с большим
+// весом занимает место квартала с меньшим; проходы повторяются, пока кто-то находит место.
 function estimate(sd,T,E,newpop){
   const n=sd.demand.length,demand=sd.demand,within=sd.within.slice(),without=sd.without.slice();
   let dE=0;for(const i of E)dE+=demand[i];
   const result=(children=0,provided=0,providedAny=0)=>{let wi=0,wo=0;for(const i of E){wi+=within[i];wo+=without[i];}
     return {env_in:dE?100*wi/dE:null,env_any:dE?100*(wi+wo)/dE:null,children,provided,provided_any:providedAny};};
   if(!newpop)return result();
-  const Tset=new Set(T),thr=sd.threshold,free=sd.free.slice(),nowhere=new Map(),far=new Map(),farOf=new Map();
-  const add=(m,k,v)=>m.set(k,(m.get(k)||0)+v);
+  const Tset=new Set(T),thr=sd.threshold,free=sd.free.slice(),newDem=new Map();
+  T.forEach((k,i)=>{const c=pyRound(newpop[i]/1000*sd.norm);if(c)newDem.set(k,c);});
+  const D=i=>Tset.has(i)?(newDem.get(i)||0):demand[i];
+  const add=(m,k,v)=>m.set(k,(m.get(k)||0)+v),get=(m,k)=>m.get(k)||0;
+  const nowhere=new Map(),occIn=new Map(),occFar=new Map(),farOf=new Map();
+  const push=(m,k,v)=>{if(!m.has(k))m.set(k,[]);m.get(k).push(v);};
   for(const [src,dst,v,ins,t] of sd.links){
     if(Tset.has(src)){if(!Tset.has(dst))free[dst]+=v;}
     else if(Tset.has(dst)){add(nowhere,src,v);if(ins)within[src]-=v;else without[src]-=v;}
-    else if(!ins){const it=[t,src,v];if(!far.has(dst))far.set(dst,[]);far.get(dst).push(it);if(!farOf.has(src))farOf.set(src,[]);farOf.get(src).push([t,dst,it]);}
+    else{const it=[D(src)/(t+1),src,v];push(ins?occIn:occFar,dst,it);if(!ins)push(farOf,src,[t,dst,it]);}
   }
-  for(const l of far.values())l.sort((a,b)=>b[0]-a[0]||a[1]-b[1]);
+  const byW=(a,b)=>a[0]-b[0]||a[1]-b[1];
+  for(const l of occIn.values())l.sort(byW);for(const l of occFar.values())l.sort(byW);
   for(const l of farOf.values())l.sort((a,b)=>b[0]-a[0]||a[1]-b[1]);
   for(const k of T){free[k]=0;within[k]=0;without[k]=0;}
-  const newDem=new Map();
-  T.forEach((k,i)=>{const c=pyRound(newpop[i]/1000*sd.norm);if(c){newDem.set(k,c);add(nowhere,k,c);}});
+  for(const [k,c] of newDem)add(nowhere,k,c);
   for(let i=0;i<n;i++){if(Tset.has(i))continue;const lack=demand[i]-within[i]-without[i];if(lack>0)nowhere.set(i,lack);}
   const farCount=i=>{let s=0;for(const x of farOf.get(i)||[])s+=x[2][2];return s;};
-  const cand=sd.pairs.filter(p=>!Tset.has(p[1])&&p[2]<=2*thr).sort((a,b)=>a[2]-b[2]||a[0]-b[0]||a[1]-b[1]);
-  for(const [src,dst,t] of cand){
-    if(t>thr)continue;
-    const want=(nowhere.get(src)||0)+farCount(src);if(want<=0)continue;
-    const x=Math.min(want,free[dst]);free[dst]-=x;let got=x;
-    if(want-got>0)for(const [child,y] of takeFar(far.get(dst)||[],want-got)){without[child]-=y;add(nowhere,child,y);got+=y;}
-    within[src]+=got;
-    const use=Math.min(got,nowhere.get(src)||0);nowhere.set(src,(nowhere.get(src)||0)-use);let rest=got-use;
-    for(const rec of farOf.get(src)||[]){if(rest<=0)break;const y=Math.min(rest,rec[2][2]);if(y>0){rec[2][2]-=y;without[src]-=y;free[rec[1]]+=y;rest-=y;}}
-  }
-  const reseek=new Map();
-  for(const [src,dst,t] of cand){
-    if(t<=thr||(nowhere.get(src)||0)<=0)continue;
-    const x=Math.min(nowhere.get(src),free[dst]);free[dst]-=x;let got=x;
-    if(nowhere.get(src)-got>0)for(const [child,y] of takeFar((far.get(dst)||[]).filter(it=>it[0]>t),nowhere.get(src)-got)){without[child]-=y;add(reseek,child,y);got+=y;}
-    nowhere.set(src,nowhere.get(src)-got);without[src]+=got;
-  }
-  for(const [src,dst,t] of cand){
-    if(t<=thr||(reseek.get(src)||0)<=0||free[dst]<=0)continue;
-    const x=Math.min(reseek.get(src),free[dst]);reseek.set(src,reseek.get(src)-x);free[dst]-=x;without[src]+=x;
+  const take=(lst,need,below,skip)=>{const got=[];for(const it of lst||[]){if(need<=0||(below!=null&&it[0]>=below))break;if(it[1]===skip)continue;const y=Math.min(need,it[2]);if(y>0){it[2]-=y;need-=y;got.push([it[1],y]);}}return got;};
+  const pairs=sd.pairs.filter(p=>!Tset.has(p[1])&&p[2]<=2*thr&&D(p[0])>0);
+  const order=(a,b)=>(D(b[0])/(b[2]+1))-(D(a[0])/(a[2]+1))||a[2]-b[2]||a[0]-b[0]||a[1]-b[1];
+  const candIn=pairs.filter(p=>p[2]<=thr).sort(order),candOut=pairs.filter(p=>p[2]>thr).sort(order);
+  for(let round=0;round<20;round++){
+    let moved=false;
+    for(const [src,dst,t] of candIn){
+      const want=get(nowhere,src)+farCount(src);if(want<=0)continue;
+      const w=D(src)/(t+1);const x=Math.min(want,free[dst]);free[dst]-=x;let got=x;
+      for(const [child,y] of take(occFar.get(dst),want-got,null,src)){without[child]-=y;add(nowhere,child,y);got+=y;}
+      for(const [child,y] of take(occIn.get(dst),want-got,w,src)){within[child]-=y;add(nowhere,child,y);got+=y;}
+      if(got<=0)continue;
+      moved=true;within[src]+=got;push(occIn,dst,[w,src,got]);occIn.get(dst).sort(byW);
+      const use=Math.min(got,get(nowhere,src));nowhere.set(src,get(nowhere,src)-use);let rest=got-use;
+      for(const rec of farOf.get(src)||[]){if(rest<=0)break;const y=Math.min(rest,rec[2][2]);if(y>0){rec[2][2]-=y;without[src]-=y;free[rec[1]]+=y;rest-=y;}}
+    }
+    for(const [src,dst,t] of candOut){
+      if(get(nowhere,src)<=0)continue;
+      const w=D(src)/(t+1);const x=Math.min(get(nowhere,src),free[dst]);free[dst]-=x;let got=x;
+      for(const [child,y] of take(occFar.get(dst),get(nowhere,src)-got,w,src)){without[child]-=y;add(nowhere,child,y);got+=y;}
+      if(got<=0)continue;
+      moved=true;nowhere.set(src,get(nowhere,src)-got);without[src]+=got;
+      const it=[w,src,got];push(occFar,dst,it);occFar.get(dst).sort(byW);push(farOf,src,[t,dst,it]);
+    }
+    if(!moved)break;
   }
   let ch=0,pr=0,pa=0;for(const [k,c] of newDem){ch+=c;pr+=within[k];pa+=within[k]+without[k];}
   return result(ch,pr,pa);
@@ -368,7 +378,7 @@ function use(data){
   $('normsBox').style.display=pv?'none':'';
   $('normsNote').textContent=pv?`Школы и сады: оценка по точному расчёту blocksnet ${pv.blocksnet} «как есть» (граф ${pv['граф']}; нормы blocksnet: школа ${pv.school.norm} мест на 1000 жителей, ${fmt(pv.school.threshold)} мин; сад ${pv.kindergarten.norm}, ${fmt(pv.kindergarten.threshold)} мин). Точный расчёт варианта — командой python -m mixuse compare.`
     :'Школы и сады: запасной расчёт 4.7.3 (места и потребность внутри окружения); нормы — 110 и 60 на 1000 жителей (по умолчанию, без регионального источника).';
-  $('provNote').textContent=pv?'Оценка обеспеченности: жители территории уезжают, учреждения территории закрываются; ищущие место занимают сначала ближайшие свободные места; кому учреждение в пределах порога, тот получает место раньше.':'';
+  $('provNote').textContent=pv?'Оценка обеспеченности: жители территории уезжают, учреждения территории закрываются; места распределяются по очереди — сначала кварталы, где ищущих место детей больше на минуту пути (так распределяет blocksnet); кому учреждение в пределах порога, тот получает место раньше, чем тот, кому оно за порогом.':'';
   fit();compute();
 }
 async function load(code){
