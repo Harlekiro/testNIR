@@ -192,6 +192,17 @@ def estimate(sd, T, E, newpop_T, area_T):
                   int(sum(within[k] + without[k] for k in new_dem)))
 
 
+CLOSED_WARN = 5.0      # % спроса окружения, оставшегося без места из-за закрытия учреждений территории
+
+
+def closed_share(sd, T, E):
+    """Доля детей окружения (% спроса окружения), ходивших в учреждения территории: в варианте они закрываются."""
+    Tset = set(T)
+    dE = sum(sd['demand'][i] for i in E)
+    gone = sum(l[2] for l in sd['links'] if l[1] in Tset and l[0] not in Tset)
+    return 100 * gone / dE if dE else 0.0
+
+
 def estimate_variants(prov_data, T, E, values, areas):
     """Оценка для всех вариантов в формате provision_bn.variant_provision (для compare_v5(prov=…)).
     values — det['values'] из compare_v5; areas — площади кварталов (в порядке строк таблицы)."""
@@ -209,6 +220,14 @@ def estimate_variants(prov_data, T, E, values, areas):
         for key in SERVICE_KEYS:
             v, b = out[scen][key]['env_in'], out['Как есть'][key]['env_in']
             out[scen][key]['delta'] = None if v is None or b is None else v - b
+    warns = []
+    for key, label in (('school', 'школьников'), ('kindergarten', 'дошкольников')):
+        sh = closed_share(prov_data[key], T, E)
+        if sh >= CLOSED_WARN:
+            warns.append(f'На территории закрываются учреждения: без места остаются {sh:.0f} % {label} окружения — '
+                         'оценка обеспеченности может расходиться с точным расчётом на несколько процентных пунктов; '
+                         'точный расчёт — командой compare в окружении с blocksnet.')
+    out['_warnings'] = warns
     out['_source'] = ('оценка по точному расчёту blocksnet «как есть» (provision_estimate): '
                       'перемещаются только дети, которых коснулся вариант')
     return out

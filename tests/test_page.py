@@ -146,3 +146,43 @@ process.stdout.write(JSON.stringify({res,full,kit:document.getElementById('kitSr
     assert 'обеспеченность окружения в пределах доступности' in out['full']
     assert 'СП 42.13330.2016' in out['kit']                       # Высоцк и Гатчина: КИТ по СП (kit_sp_row)
     assert 'раз плотнее' in out['info'] or 'раз реже' in out['info']
+
+
+def test_closed_facility_warning(tmp_path):
+    """Предупреждение «закрываются учреждения территории» — в пакете и на странице одинаково (Гатчина, квартал 147:
+    крупнейший сад; 40 % дошкольников окружения ходили туда)."""
+    if not NODE:
+        pytest.skip('Node.js не найден')
+    cfg = load_config(os.path.join(ROOT, 'configs', 'gatchina_layers.yaml'))
+    if not os.path.exists(cfg['blocks']):
+        pytest.skip('нет данных Гатчины')
+    city = build_table(load_layers(cfg, cfg['_groups']), cfg, cfg['params'], cfg['_groups'])
+    pdat = load_page_data(cfg, city)
+    if not pdat:
+        pytest.skip('нет точного расчёта «как есть»')
+    t = city['table']
+    T = [int(t.loc[t['cap_kinder'].idxmax(), 'block_id'])]
+    _, _, det = compare(city, T, cfg['params'], cfg['scenarios'])
+    prov = estimate_variants(pdat, det['T'], list(det['E']), det['values'], t['area'].to_numpy())
+    _, info, _ = compare(city, T, cfg['params'], cfg['scenarios'], prov=prov)
+    pkg = [w for w in info['предупреждения'] if 'закрываются учреждения' in w]
+    assert len(pkg) == 1 and 'дошкольников' in pkg[0]
+    T0 = list(cfg['territory'])
+    _, _, det0 = compare(city, T0, cfg['params'], cfg['scenarios'])
+    prov0 = estimate_variants(pdat, det0['T'], list(det0['E']), det0['values'], t['area'].to_numpy())
+    _, info2, _ = compare(city, T0, cfg['params'], cfg['scenarios'], prov=prov0)
+    assert not any('закрываются учреждения' in w for w in info2['предупреждения'])     # территория из настроек — нет
+    data = tmp_path / 'g.json'
+    export.web_json_v5(city, cfg, str(data), pdat)
+    html = open(PAGE, encoding='utf-8').read()
+    block = re.search(r'// ==== РАСЧЁТ \(начало\)[^\n]*\n(.*)// ==== РАСЧЁТ \(конец\)', html, re.S).group(1)
+    js = tmp_path / 'w.js'
+    js.write_text(block + r'''
+const D=JSON.parse(require('fs').readFileSync(process.argv[2],'utf8'));const B=D.blocks;B.forEach(prep);
+const idx=new Map(B.map((b,i)=>[b.id,i]));
+const r=calc(D,B,[idx.get(+process.argv[3])],D.params,D.scenarios,{mode:'sp',spRow:D.params.kit_sp_row});
+process.stdout.write(JSON.stringify(r.warns));''', encoding='utf-8')
+    out = subprocess.run([NODE, str(js), str(data), str(T[0])], capture_output=True, timeout=300)
+    assert out.returncode == 0, out.stderr.decode('utf-8', 'replace')
+    page = [w for w in json.loads(out.stdout.decode('utf-8')) if 'закрываются учреждения' in w]
+    assert len(page) == 1 and norm_text(page[0]) == pkg[0]

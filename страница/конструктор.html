@@ -247,6 +247,12 @@ function calc(D,B,T,P,SCN,K){
   }
   if(D.provision)for(const name in out)for(const key of ['school','kindergarten']){const v=out[name].prov[key].env_in,b=out['Как есть'].prov[key].env_in;out[name].prov[key].delta=v==null||b==null?null:v-b;}
   const names=Object.keys(out),warns=kk.warns.slice();
+  if(D.provision)for(const [key,label] of [['school','школьников'],['kindergarten','дошкольников']]){   // как closed_share в пакете
+    const sd=D.provision[key],Ts=new Set(T);let dE=0,gone=0;for(const i of E)dE+=sd.demand[i];
+    for(const l of sd.links)if(Ts.has(l[1])&&!Ts.has(l[0]))gone+=l[2];
+    const sh=dE?100*gone/dE:0;
+    if(sh>=5)warns.push(`На территории закрываются учреждения: без места остаются ${fmt(sh)} % ${label} окружения — оценка обеспеченности может расходиться с точным расчётом на несколько процентных пунктов; точный расчёт — командой compare в окружении с blocksnet.`);
+  }
   const maxJ=Math.max(0,...names.slice(1).map(x=>out[x].Jcity)),maxN=Math.max(0,...names.slice(1).map(x=>out[x].N));
   if(maxJ>10||maxN>0.15*popA)warns.push(`Масштаб: вариант добавляет до ${fmt(maxJ)} % рабочих мест всего набора и до ${fmt(maxN)} жителей (во всём наборе ${fmt(popA)}). Варианты различаются объёмом застройки сильнее, чем сочетанием функций. Проверьте КИТ или уменьшите территорию.`);
   return {out,E,eff,kit,kitSrc:kk.src,kitE:kk.kitE,F,S,popE,jobsE,warns};

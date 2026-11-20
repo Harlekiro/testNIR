@@ -269,7 +269,7 @@ def compare_v5(city, T_ids, P, SCN, prov=None):
         info['до метро, м'] = int(round(dist_points_to_polys(city['pts']['метро'], Tpolys).min()))
     if len(city['pts']['остановка']):
         info['до остановки, м'] = int(round(dist_points_to_polys(city['pts']['остановка'], Tpolys).min()))
-    warns = list(kit_warns)
+    warns = list(kit_warns) + list((prov or {}).get('_warnings', []))
     maxJ = max(out[n]['Jcity'] for n in names[1:]) if len(names) > 1 else 0
     maxN = max(out[n]['N'] for n in names[1:]) if len(names) > 1 else 0
     if maxJ > 10 or maxN > 0.15 * popA:                    # как на демо-странице
