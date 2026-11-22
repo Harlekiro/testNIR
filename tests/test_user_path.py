@@ -126,6 +126,48 @@ def test_acceptance_as_user(code, tmp_path):
     assert os.path.exists(os.path.join(prog, 'results', f'{code}_user_для_страницы.json'))
 
 
+def test_vysotsk_example_from_clean_archive(tmp_path):
+    """Пример Высоцка считается из чистого архива (git archive HEAD) без докладывания файлов: слои data/vysotsk/
+    в репозитории; ноутбук с ПРИМЕР = 'vysotsk' даёт эталоны tests/etalon/v5/vysotsk (запасной расчёт школ и садов);
+    матрица доступности из архива подходит к слою кварталов (контрольная сумма — слой передан байт в байт)."""
+    if subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True).returncode:
+        pytest.skip('нет git')
+    prog = zip_copy(str(tmp_path))
+    for f in ['кварталы.geojson', 'здания.geojson', 'зоны.geojson', 'сервисы', 'промышленность', 'access/matrix_walk.npz']:
+        assert os.path.exists(os.path.join(prog, 'data', 'vysotsk', f)), f'нет в архиве: data/vysotsk/{f}'
+    nb = os.path.join(prog, 'метод_сравнения_вариантов.ipynb')
+    d = json.load(open(nb, encoding='utf-8'))
+    for c in d['cells']:
+        c['source'] = [x.replace('ПРИМЕР = None', "ПРИМЕР = 'vysotsk'") for x in c['source']]
+    json.dump(d, open(nb, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    runner = os.path.join(prog, '..', 'run_all.py')
+    open(runner, 'w', encoding='utf-8').write(RUNNER + r'''
+from mixuse.config import load_config
+from mixuse.blocks import load_blocks
+from mixuse.provision_bn import load_matrix
+c = load_config('configs/vysotsk.yaml')
+mx, _ = load_matrix(c, load_blocks(c)[0]['block_id'].tolist())
+print('MATRIX_OK', mx.shape)
+''')
+    env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
+    env.update(MPLBACKEND='Agg', PYTHONIOENCODING='utf-8', MIXUSE_PROVISION='fallback')
+    r = subprocess.run([sys.executable, runner, nb], cwd=prog, env=env, capture_output=True, timeout=1800)
+    out = r.stdout.decode('utf-8', 'replace') + r.stderr.decode('utf-8', 'replace')
+    assert r.returncode == 0, out[-3000:]
+    assert 'MIXUSE_FROM ' + os.path.join(prog, 'mixuse') in out.replace('/', os.sep)
+    assert 'MATRIX_OK (473, 473)' in out
+    ref_dir = os.path.join(ETALON_V5, 'vysotsk')
+    for name in sorted(os.listdir(ref_dir)):
+        got, ref = os.path.join(prog, 'results', name), os.path.join(ref_dir, name)
+        assert os.path.exists(got), got
+        if name.endswith('таблица_кварталов.csv'):
+            same_table(pd.read_csv(ref, encoding='utf-8-sig'), pd.read_csv(got, encoding='utf-8-sig'))
+        else:
+            kw = {'index_col': 0} if 'сравнение' in name else {}
+            same_strings(pd.read_csv(ref, encoding='utf-8-sig', **kw, **STR),
+                         pd.read_csv(got, encoding='utf-8-sig', **kw, **STR))
+
+
 def _form(**extra):
     f = {'название': 'Тест', 'код': 'test', 'кварталы': {'файл': 'x.geojson'}, 'территория': [1]}
     f.update(extra)

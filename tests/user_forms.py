@@ -23,9 +23,9 @@ FORMS = {
     точный_расчёт=dict(включить=False, файл_OSM=None),
 )
 ''', {},
-        [('examples/vysotsk/кварталы.geojson', 'кварталы.geojson'), ('examples/vysotsk/здания.geojson', 'здания.geojson'),
-         ('examples/vysotsk/зоны.geojson', 'зоны.geojson'), ('examples/vysotsk/сервисы', 'сервисы'),
-         ('examples/vysotsk/промышленность', 'промышленность')]),
+        [('data/vysotsk/кварталы.geojson', 'кварталы.geojson'), ('data/vysotsk/здания.geojson', 'здания.geojson'),
+         ('data/vysotsk/зоны.geojson', 'зоны.geojson'), ('data/vysotsk/сервисы', 'сервисы'),
+         ('data/vysotsk/промышленность', 'промышленность')]),
 
     'gatchina_layers': ('''ДАННЫЕ = dict(
     название='Гатчина',

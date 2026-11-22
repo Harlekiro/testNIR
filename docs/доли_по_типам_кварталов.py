@@ -1,15 +1,17 @@
-"""Фактические доли поэтажной площади по типам кварталов (к docs/доли_вариантов.md).
+"""Доли вариантов Ж+К+ОД и К+ОД по фактическим кварталам — метод из docs/доли_вариантов.md (решение автора 23.11.2026).
 
-Запуск из корня проекта:  python docs/доли_по_типам_кварталов.py vysotsk gatchina_layers spb_full
-Результат — таблица в results/доли_по_типам_кварталов.csv и печать.
+Запуск из корня проекта:  python docs/доли_по_типам_кварталов.py
+Результат — печать и results/доли_по_типам_кварталов.csv.
 
-Поэтажная площадь квартала по группам (здания по правилам раздела 4 ТЗ — таблица зданий пакета):
-  Ж  = поэтажная площадь жилых домов − встроенные помещения;
-  К  = поэтажная площадь нежилых зданий группы К (от S_min) + встроенные помещения К;   ОД — так же;
-  П  = нежилые здания группы П.  Здания группы X (функция не определена) не входят.
-Тип квартала («К+ОД», «Ж+К+ОД», …) — набор групп, которые в нём есть. Три правила «есть»:
-  наличие — площадь группы больше 0;  порог 5 % и порог 10 % — доля группы в Ж+К+ОД+П не меньше порога.
-Для каждого типа — число кварталов, медиана долей по кварталам и доли суммарной площади.
+1. Поэтажная площадь квартала по группам (здания по правилам раздела 4 ТЗ — таблица зданий пакета):
+     Ж  = поэтажная площадь жилых домов − встроенные помещения;
+     К  = поэтажная площадь нежилых зданий группы К (от S_min) + встроенные помещения К;   ОД — так же;
+     П  = нежилые здания группы П.  Здания группы X (функция не определена) не входят.
+2. Функция присутствует в квартале, если её доля в Ж + К + ОД + П не меньше 5 %.
+   Тип квартала — набор присутствующих функций («Ж+К+ОД» — ровно Ж, К и ОД; «К+ОД» — ровно К и ОД).
+3. Доли квартала этого типа — доли его функций типа, приведённые к 100 % (функции меньше 5 % отбрасываются).
+4. Доли варианта — медиана по кварталам этого типа трёх городов вместе; медианы приводятся к 100 %
+   и округляются до 5 % (сумма — 100: недостающие 5 % получает функция с наибольшим остатком округления).
 """
 import os
 import sys
@@ -23,11 +25,14 @@ from mixuse.config import load_config            # noqa: E402
 from mixuse.blocks import load_layers, build_table   # noqa: E402
 
 G = ['Ж', 'К', 'ОД', 'П']
-TYPES = ['К+ОД', 'Ж+К+ОД']
-RULES = [('наличие', None), ('порог 5 %', 5), ('порог 10 %', 10)]
+THRESHOLD = 5          # %: функция присутствует в квартале
+STEP = 5               # %: округление долей варианта
+CODES = ['vysotsk', 'gatchina_layers', 'spb_full']
+TYPES = ['Ж+К+ОД', 'К+ОД']
 
 
 def block_areas(code):
+    """Поэтажная площадь Ж, К, ОД, П по кварталам набора (кварталы без площади этих групп — отброшены)."""
     cfg = load_config(os.path.join(ROOT, 'configs', f'{code}.yaml'))
     L = load_layers(cfg, cfg['_groups'])
     city = build_table(L, cfg, cfg['params'], cfg['_groups'])
@@ -41,39 +46,44 @@ def block_areas(code):
     for g in ['К', 'ОД']:
         a[g] += b['bi_' + g].groupby(b['block']).sum().reindex(a.index).fillna(0)
     a['block_id'] = city['table']['block_id'].to_numpy()
-    return a[a[G].sum(axis=1) > 0]
+    a['набор'] = code
+    return a[a[G].sum(axis=1) > 0].reset_index(drop=True)
 
 
-def summary(areas):
-    rows = []
-    for code, a in areas.items():
-        sh = a[G].div(a[G].sum(axis=1), axis=0) * 100
-        for rule, thr in RULES:
-            has = a[G].gt(0) if thr is None else sh.ge(thr)
-            typ = has.apply(lambda r: '+'.join(g for g in G if r[g]), axis=1)
-            for tt in TYPES:
-                m = typ == tt
-                gs = tt.split('+')
-                part = a.loc[m, gs]
-                med = (part.div(part.sum(axis=1), axis=0) * 100).median() if m.any() else pd.Series(dtype=float)
-                tot = 100 * part.sum() / part.sum().sum() if m.any() else pd.Series(dtype=float)
-                rows.append({'набор': code, 'правило': rule, 'тип': tt, 'кварталов': int(m.sum()),
-                             **{f'медиана {g}, %': round(med.get(g, float('nan')), 1) for g in gs},
-                             **{f'по сумме {g}, %': round(tot.get(g, float('nan')), 1) for g in gs}})
-    return pd.DataFrame(rows)
+def typed_shares(a, tt):
+    """Кварталы типа tt и доли их функций типа, % (сумма по кварталу — 100)."""
+    sh = a[G].div(a[G].sum(axis=1), axis=0) * 100
+    typ = sh.ge(THRESHOLD).apply(lambda r: '+'.join(g for g in G if r[g]), axis=1)
+    gs = tt.split('+')
+    part = a.loc[typ == tt, gs]
+    return part.div(part.sum(axis=1), axis=0) * 100
+
+
+def round_to_step(med):
+    """Медианы → доли варианта: к 100 %, округление до STEP, сумма 100."""
+    x = med / med.sum() * 100
+    r = (x / STEP).round() * STEP
+    while r.sum() != 100:
+        d = 100 - r.sum()
+        k = (x - r).idxmax() if d > 0 else (x - r).idxmin()
+        r[k] += STEP if d > 0 else -STEP
+    return r.astype(int)
 
 
 if __name__ == '__main__':
-    codes = sys.argv[1:] or ['vysotsk', 'gatchina_layers', 'spb_full']
-    areas = {c: block_areas(c) for c in codes}
-    if len(codes) > 1:
-        areas['все три'] = pd.concat(areas.values(), ignore_index=True)
-    vo = os.path.join(ROOT, 'examples', 'spb_vasilievsky', 'blocks.geojson')
-    if 'spb_full' in areas and os.path.exists(vo):          # Васильевский остров — номера кварталов совпадают с spb_full
-        from mixuse.geometry import read_layer
-        ids = set(pd.to_numeric(read_layer(vo)[0]['block_id']).astype(int))
-        areas['Васильевский остров'] = areas['spb_full'][areas['spb_full']['block_id'].isin(ids)]
-    out = summary(areas)
+    areas = pd.concat([block_areas(c) for c in CODES], ignore_index=True)
+    rows = []
+    for tt in TYPES:
+        gs = tt.split('+')
+        for code in CODES + ['все три']:
+            a = areas if code == 'все три' else areas[areas['набор'] == code]
+            s = typed_shares(a, tt)
+            med = s.median() if len(s) else pd.Series(float('nan'), index=gs)
+            row = {'вариант': tt, 'набор': code, 'кварталов': len(s), **{f'медиана {g}, %': round(med[g], 1) for g in gs}}
+            if code == 'все три':
+                row.update({f'доля варианта {g}, %': v for g, v in round_to_step(med).items()})
+            rows.append(row)
+    out = pd.DataFrame(rows)
     os.makedirs(os.path.join(ROOT, 'results'), exist_ok=True)
     out.to_csv(os.path.join(ROOT, 'results', 'доли_по_типам_кварталов.csv'), index=False, encoding='utf-8-sig')
     with pd.option_context('display.width', 250, 'display.max_columns', 20):
