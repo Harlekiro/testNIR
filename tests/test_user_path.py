@@ -4,7 +4,7 @@
   1. скачивает программу архивом ZIP — здесь `git archive --format=zip HEAD` (так GitHub собирает «Download ZIP»;
      проверяется последний коммит), архив распаковывается в пустую папку;
   2. кладёт слои в data/<код>_user/ (tests/user_forms.py: откуда копировать);
-  3. заполняет анкету шага 0 (и ячейку P там, где у набора есть решения автора, которых в анкете нет);
+  3. заполняет анкету шага 0 (ячейку P не трогает — ТЗ 18.2а);
   4. выполняет все ячейки ноутбука (Run All) обычным Python, в котором пакет mixuse не установлен:
      ноутбук должен сам найти папку mixuse рядом с собой;
   5. результаты results/<код>_user_*.csv совпадают с эталонами results_v5/<код>/ (они посчитаны по YAML командой
@@ -85,7 +85,7 @@ def fill_notebook(path, code):
             continue
         t = s.split('\n')
         c['source'] = [x + '\n' for x in t[:-1]] + ([t[-1]] if t[-1] else [])
-    assert done == {'анкета', 'P'}
+    assert 'анкета' in done and ('P' in done or not params)
     json.dump(nb, open(path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 
 

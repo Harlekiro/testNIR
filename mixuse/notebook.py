@@ -49,6 +49,18 @@ def config_from_form(form, P=None, SCN=None, group_table=None, base=None):
                 P['kit_source'] = kit['источник']
             elif kit.get('строка_СП'):
                 src['kit_sp_row'] = kit['источник']
+    if rules != 'v4':
+        note = form.get('ограничения_территории')        # ТЗ 18.2а: в отчёт о данных и в вывод для вариантов с жильём
+        if note:
+            P['data_note'] = P['housing_note'] = str(note).strip()
+        st = form.get('статистика') or {}                  # ТЗ 18.2а: работники по статистике (проверка 4.8.4)
+        if set(st) - {'работников', 'источник'}:
+            raise DataError(f'статистика: неизвестные поля {sorted(set(st) - {"работников", "источник"})}; '
+                            'допустимо «работников» (число) и «источник».')
+        if st.get('работников') is not None:
+            P['stat_jobs'] = st['работников']
+            if st.get('источник'):
+                src['stat_jobs'] = st['источник']
     ex = form.get('точный_расчёт') or {}                   # ТЗ 18.2: точный расчёт школ и садов (blocksnet)
     if set(ex) - {'включить', 'файл_OSM'}:
         raise DataError(f'точный_расчёт: неизвестные поля {sorted(set(ex) - {"включить", "файл_OSM"})}; '

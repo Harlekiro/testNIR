@@ -255,16 +255,17 @@ function calc(D,B,T,P,SCN,K){
   }
   const maxJ=Math.max(0,...names.slice(1).map(x=>out[x].Jcity)),maxN=Math.max(0,...names.slice(1).map(x=>out[x].N));
   if(maxJ>10||maxN>0.15*popA)warns.push(`Масштаб: вариант добавляет до ${fmt(maxJ)} % рабочих мест всего набора и до ${fmt(maxN)} жителей (во всём наборе ${fmt(popA)}). Варианты различаются объёмом застройки сильнее, чем сочетанием функций. Проверьте КИТ или уменьшите территорию.`);
-  return {out,E,eff,kit,kitSrc:kk.src,kitE:kk.kitE,F,S,popE,jobsE,warns};
+  const city=names.slice(1).some(x=>out[x].Jcity>10||(popA&&100*out[x].N/popA>10));   // как city_scale в пакете (ТЗ 18.2а)
+  return {out,E,eff,kit,kitSrc:kk.src,kitE:kk.kitE,F,S,popE,jobsE,warns,city};
 }
 const GROUP_WORDS={'К':'торговле и услугам','ОД':'общественно-деловой функции'};
 function cmpWord(d){return Math.abs(d)<0.03?'почти без изменений':(d>0?'больше':'меньше');}
-function conclusion(o,base,P){     // вывод 4.7.0 — как conclusion() в пакете; P.compare_city, P.housing_note — ТЗ 17
+function conclusion(o,base,P,city){   // вывод 4.7.0 — как conclusion() в пакете; city — сравнение с городом (18.2а), P.housing_note — ТЗ 17
   P=P||{};
   const t=[pyRound(o.N)>0?`Новых жителей — ${fmt(o.N)}, рабочих мест — ${fmt(o.J)}`:`Жилья нет, рабочих мест — ${fmt(o.J)}`];
   t.push(`к нынешним рабочим местам ${o.dJ>=0?'+':'−'}${fmt(Math.abs(o.dJ))}`);
   t.push(`рабочих мест на жителя в окружении ${cmpWord(o.K-base.K)}: ${fmt(base.K,2)} → ${fmt(o.K,2)}`);
-  if(P.compare_city)t.push(`рабочих мест на жителя по городу целиком ${cmpWord(o.Kall-base.Kall)}: ${fmt(base.Kall,2)} → ${fmt(o.Kall,2)}; рабочие места территории — ${fmt(o.Jcity)} % рабочих мест города`+(pyRound(o.N)>0?`, жители — ${fmt(o.Ncity)} % жителей города`:''));
+  if(city)t.push(`рабочих мест на жителя по городу целиком ${cmpWord(o.Kall-base.Kall)}: ${fmt(base.Kall,2)} → ${fmt(o.Kall,2)}; рабочие места территории — ${fmt(o.Jcity)} % рабочих мест города`+(pyRound(o.N)>0?`, жители — ${fmt(o.Ncity)} % жителей города`:''));
   const ch=[];for(const g of ['К','ОД']){const [a,c]=o.acc[g];if(pyRound(a)>0)ch.push(`доступ к ${GROUP_WORDS[g]} получают жители (${fmt(a)} чел.)`);if(pyRound(c)>0)ch.push(`доступ к ${GROUP_WORDS[g]} теряют жители (${fmt(c)} чел.)`);}
   t.push(ch.length?ch.join('; '):'доступ к торговле и общественно-деловой функции без изменений');
   const [pb,pa]=o.acc['П'];
@@ -302,15 +303,16 @@ function render(){
     mk('Жители на территории',o=>o.N),
     mk('Рабочие места на территории (изменение к нынешним)',(o,n)=>now(n)?fmt(o.J):`${fmt(o.J)} (${o.dJ>0?'+':''}${fmt(o.dJ)})`),
     mk('Рабочих мест на жителя в окружении',o=>o.K,2),
+    ...(last.city?[mk('K по всем данным',o=>o.Kall,2),mk('J, % рабочих мест набора',o=>o.Jcity),mk('N, % жителей набора',o=>o.Ncity)]:[]),
     mk('Доступ к торговле и услугам: получают / теряют, жителей',(o,n)=>acc(o,n,'К')),
     mk('Доступ к общественно-деловой функции: получают / теряют',(o,n)=>acc(o,n,'ОД')),
     mk('Жители рядом с производством',(o,n)=>now(n)?(first?fmt(first.acc['П'][0]):'—'):fmt(o.acc['П'][1])),
     mk('Школьники / дошкольники с территории (без свободного места в окружении)'+(D.provision?' — оценка':''),(o,n)=>now(n)?`обеспеченность ${o.sP==null?'—':fmt(o.sP)} % / ${o.kP==null?'—':fmt(o.kP)} %`:`${fmt(o.sT)} / ${fmt(o.kT)} (${fmt(o.sNo)} / ${fmt(o.kNo)})`)];
-  R.push(`<tr class="concl"><td>Вывод</td><td>—</td>${names.slice(1).map(n=>`<td>${conclusion(out[n],out['Как есть'],D.params)}</td>`).join('')}</tr>`);
+  R.push(`<tr class="concl"><td>Вывод</td><td>—</td>${names.slice(1).map(n=>`<td>${conclusion(out[n],out['Как есть'],D.params,last.city)}</td>`).join('')}</tr>`);
   $('res').innerHTML=R.join('');
   const Q=[head];
   Q.push(sec('Работа и жильё'),mk('Жители на территории N',o=>o.N),mk('Рабочие места на территории J',o=>o.J),mk('Изменение рабочих мест к нынешним',(o,n)=>now(n)?'—':o.dJ,0,true),
-    mk('Доля нежилых площадей, %',o=>o.d?100*(1-o.d['Ж']):''),mk('J, % рабочих мест всего набора',o=>o.Jcity,1),...(D.params.compare_city?[mk('N, % жителей всего набора',o=>o.Ncity,1)]:[]),mk('K окружения',o=>o.K,2),mk('K окружения, нижняя граница',o=>o.KA,2),mk('K по всем данным',o=>o.Kall,3));
+    mk('Доля нежилых площадей, %',o=>o.d?100*(1-o.d['Ж']):''),mk('J, % рабочих мест всего набора',o=>o.Jcity,1),mk('N, % жителей всего набора',o=>o.Ncity,1),mk('K окружения',o=>o.K,2),mk('K окружения, нижняя граница',o=>o.KA,2),mk('K по всем данным',o=>o.Kall,3));
   Q.push(sec('Доступ к функциям (r)'),mk('Доступ к К: получают / теряют',(o,n)=>acc(o,n,'К')),mk('Доступ к ОД: получают / теряют',(o,n)=>acc(o,n,'ОД')),
     mk('Жители в радиусе r от производства: до / после',(o,n)=>now(n)?'—':`${fmt(o.acc['П'][0])} / ${fmt(o.acc['П'][1])}`));
   if(D.provision){

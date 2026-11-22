@@ -259,9 +259,10 @@ def compare_v5(city, T_ids, P, SCN, prov=None):
             s_, k_ = prov[n]['school'], prov[n]['kindergarten']
             out[n].update(prov=prov[n], sP=s_['env_in'], kP=k_['env_in'], sT=s_['children'], kT=k_['children'],
                           sNo=s_['children'] - s_['provided'], kNo=k_['children'] - k_['provided'])
-    full = pd.DataFrame({n: detailed_column(out[n], city=P.get('compare_city')) for n in names})
-    short = pd.DataFrame({n: short_column(out[n], out) for n in names})
-    concl = {n: conclusion(out[n], out['Как есть'], P) for n in names[1:]}
+    to_city = city_scale(out, popA)            # ТЗ 18.2а: сравнение с городом целиком — автоматически
+    full = pd.DataFrame({n: detailed_column(out[n]) for n in names})
+    short = pd.DataFrame({n: short_column(out[n], out, to_city) for n in names})
+    concl = {n: conclusion(out[n], out['Как есть'], P, to_city) for n in names[1:]}
     short.loc['Вывод'] = ['—'] + [concl[n] for n in names[1:]]
     info = {'кварталов на территории': len(T), 'площадь территории, га': round(float(S) / 1e4, 1),
             'КИТ варианта': kit, 'КИТ: откуда': kit_from,
@@ -285,23 +286,32 @@ def compare_v5(city, T_ids, P, SCN, prov=None):
                      f'(во всём наборе {fmt(popA)}). Варианты различаются объёмом застройки сильнее, чем сочетанием функций. '
                      'Проверьте КИТ или уменьшите территорию.')
     info['предупреждения'] = warns
-    return full, info, {'T': T, 'E': E, 'effect': effect, 'short': short, 'conclusions': concl, 'values': out}
+    return full, info, {'T': T, 'E': E, 'effect': effect, 'short': short, 'conclusions': concl, 'values': out, 'city': to_city}
 
 
 def _acc(o, g):
     return '—' if o['d'] is None else f"+{fmt(o['acc'][g][0])} / −{fmt(o['acc'][g][1])}"
 
 
-def detailed_column(o, city=False):
-    """Подробная таблица (results/<код>_сравнение_подробно.csv): строки 4.7.1–4.7.3, как на демо-странице.
-    city — сравнение с городом целиком (параметр compare_city, ТЗ 17): строка «N, % жителей всего набора»."""
+CITY_SHARE = 10.0      # %: вариант добавляет больше этой доли жителей или рабочих мест набора — сравнение с городом (18.2а)
+
+
+def city_scale(out, popA):
+    """Сравнение с городом целиком нужно (ТЗ 18.2а), если хотя бы один вариант добавляет больше CITY_SHARE %
+    рабочих мест или жителей всего набора: малый город или большая территория."""
+    names = [n for n in out if out[n]['d'] is not None]
+    return any(out[n]['Jcity'] > CITY_SHARE or (popA and 100 * out[n]['N'] / popA > CITY_SHARE) for n in names)
+
+
+def detailed_column(o):
+    """Подробная таблица (results/<код>_сравнение_подробно.csv): строки 4.7.1–4.7.3, как на демо-странице."""
     now = o['d'] is None
     return {
         'Жители на территории N': int(round(o['N'])), 'Рабочие места на территории J': int(round(o['J'])),
         'Изменение рабочих мест к нынешним': '—' if now else int(round(o['dJ'])),
         'Доля нежилых площадей, %': '' if now else round(100 * (1 - o['d']['Ж'])),
         'J, % рабочих мест всего набора': round(o['Jcity'], 1),
-        **({'N, % жителей всего набора': round(o['Ncity'], 1)} if city else {}),
+        'N, % жителей всего набора': round(o['Ncity'], 1),
         'K окружения': round(float(o['K']), 2), 'K окружения, нижняя граница': round(float(o['KA']), 2),
         'Рабочие места на территории J, нижняя граница': int(round(o['J_A'])),
         'K по всем данным': round(float(o['Kall']), 3),
@@ -335,8 +345,8 @@ def provision_rows(o):
     return rows
 
 
-def short_column(o, out):
-    """Краткая таблица 4.7.0 (основной вывод программы и страницы)."""
+def short_column(o, out, city=False):
+    """Краткая таблица 4.7.0 (основной вывод программы и страницы). city — строки сравнения с городом целиком (18.2а)."""
     now = o['d'] is None
     first = out[list(out)[1]] if len(out) > 1 else None
     if now:
@@ -351,6 +361,8 @@ def short_column(o, out):
         'Рабочие места на территории (изменение к нынешним)':
             fmt(o['J']) if now else f"{fmt(o['J'])} ({'+' if o['dJ'] > 0 else ''}{fmt(o['dJ'])})",
         'Рабочих мест на жителя в окружении': f"{o['K']:.2f}",
+        **({'K по всем данным': f"{o['Kall']:.2f}", 'J, % рабочих мест набора': fmt(o['Jcity']),
+            'N, % жителей набора': fmt(o['Ncity'])} if city else {}),
         'Доступ к торговле и услугам: получают / теряют, жителей': _acc(o, 'К'),
         'Доступ к общественно-деловой функции: получают / теряют': _acc(o, 'ОД'),
         'Жители рядом с производством': prod,
@@ -362,16 +374,16 @@ def _word(d):
     return 'почти без изменений' if abs(d) < 0.03 else ('больше' if d > 0 else 'меньше')
 
 
-def conclusion(o, base, P=None):
+def conclusion(o, base, P=None, city=False):
     """Вывод (4.7.0): фразы по порядку, без оценок «лучше / хуже» и без сравнения вариантов между собой.
-    P['compare_city'] — после окружения сравнение с городом целиком (ТЗ 17, малый город);
+    city — после окружения сравнение с городом целиком (city_scale, ТЗ 18.2а);
     P['housing_note'] — примечание в конце вывода для вариантов с жильём (ТЗ 17)."""
     P = P or {}
     t = [f"Новых жителей — {fmt(o['N'])}, рабочих мест — {fmt(o['J'])}" if round(o['N']) > 0
          else f"Жилья нет, рабочих мест — {fmt(o['J'])}"]
     t.append(f"к нынешним рабочим местам {'+' if o['dJ'] >= 0 else '−'}{fmt(abs(o['dJ']))}")
     t.append(f"рабочих мест на жителя в окружении {_word(o['K'] - base['K'])}: {base['K']:.2f} → {o['K']:.2f}")
-    if P.get('compare_city'):
+    if city:
         t.append(f"рабочих мест на жителя по городу целиком {_word(o['Kall'] - base['Kall'])}: {base['Kall']:.2f} → {o['Kall']:.2f}; "
                  f"рабочие места территории — {fmt(o['Jcity'])} % рабочих мест города"
                  + (f", жители — {fmt(o['Ncity'])} % жителей города" if round(o['N']) > 0 else ''))

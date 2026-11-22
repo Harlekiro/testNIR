@@ -35,7 +35,7 @@ for(const job of A){
   const r=calc(D,B,T,D.params,D.scenarios,job.kit);
   const out={};for(const [n,o] of Object.entries(r.out))out[n]={N:o.N,J:o.J,K:o.K,KA:o.KA,Kall:o.Kall,Jcity:o.Jcity,Ncity:o.Ncity,acc:o.acc,
     sP:o.sP,kP:o.kP,sT:o.sT,kT:o.kT,sNo:o.sNo,kNo:o.kNo,prov:o.prov||null,
-    concl:n==='Как есть'?null:conclusion(o,r.out['Как есть'],D.params)};
+    concl:n==='Как есть'?null:conclusion(o,r.out['Как есть'],D.params,r.city)};
   res.push({kit:r.kit,kitE:r.kitE,E:r.E.map(i=>B[i].id),out});
 }
 process.stdout.write(JSON.stringify(res));
