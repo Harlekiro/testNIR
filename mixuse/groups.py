@@ -46,19 +46,60 @@ def load_group_table(path=None):
     return groups
 
 
-def zone_group(zone, rules):
-    """Группа нежилого здания без сервисов внутри — по зоне квартала (первое совпавшее начало кода).
+DEFAULT_ZONE_DICT = os.path.join(os.path.dirname(DEFAULT_TABLE), 'zone_dictionary.csv')
 
-    rules — список пар (начало кода зоны, группа), например [('ТП', 'П'), ('ТД', 'ОД')]; иначе X.
-    """
-    z = str(zone or '')
+
+def load_zone_dictionary(path=None):
+    """Словарь кодов зон (ТЗ 18.5): zone_dictionary.csv в корне проекта, столбцы «значение; группа; схема; сравнение».
+    сравнение: «начало» — код зоны начинается со значения (коды ПЗЗ), «вхождение» — значение встречается в коде (слова).
+    Регистр не учитывается. Возвращает список строк (значение, группа, схема, сравнение)."""
+    path = path or DEFAULT_ZONE_DICT
+    if not os.path.exists(path):
+        raise FileNotFoundError(f'Нет словаря зон: {path}.')
+    t = pd.read_csv(path, sep=None, engine='python', encoding='utf-8-sig', dtype=str).fillna('')
+    t.columns = [c.strip() for c in t.columns]
+    miss = {'значение', 'группа', 'схема', 'сравнение'} - set(t.columns)
+    if miss:
+        raise ValueError(f'В словаре зон {path} нет столбцов: {", ".join(sorted(miss))}.')
+    rows = []
+    for r in t.itertuples():
+        v, g, how = r.значение.strip(), r.группа.strip(), r.сравнение.strip()
+        if not v:
+            continue
+        if g not in ('П', 'ОД') or how not in ('начало', 'вхождение'):
+            raise ValueError(f'Словарь зон {path}, строка «{v}»: группа — П или ОД, сравнение — «начало» или «вхождение».')
+        rows.append((v, g, r.схема.strip(), how))
+    return rows
+
+
+def zone_match(zone, rules, zdict=None):
+    """Группа зоны квартала и откуда она взята. Возвращает (группа, откуда, конфликт).
+
+    rules — ручные правила (начало кода → группа, как раньше); zdict — словарь зон (v5, ТЗ 18.5) или None (v4).
+    1) ручное правило — первое совпавшее начало кода; 2) словарь — все подходящие строки; если подходят и П, и ОД —
+    конфликт, побеждает П; 3) иначе X («прочее»)."""
+    z = '' if zone is None or (isinstance(zone, float) and zone != zone) else str(zone)
     for prefix, grp in rules:
         if z.startswith(prefix):
-            return grp
-    return 'X'
+            return grp, f'правило анкеты «{prefix}»', False
+    if not zdict or not z:
+        return 'X', None, False
+    zl = z.lower()
+    hits = [r for r in zdict if (zl.startswith(r[0].lower()) if r[3] == 'начало' else r[0].lower() in zl)]
+    if not hits:
+        return 'X', None, False
+    groups = {r[1] for r in hits}
+    grp = 'П' if 'П' in groups else 'ОД'
+    r = next(h for h in hits if h[1] == grp)
+    return grp, f'словарь: «{r[0]}» ({r[2]})', len(groups) > 1
 
 
-def building_group(found, zone, rules):
+def zone_group(zone, rules, zdict=None):
+    """Группа нежилого здания без сервисов внутри — по зоне квартала (zone_match): К, ОД, П или X."""
+    return zone_match(zone, rules, zdict)[0]
+
+
+def building_group(found, zone, rules, zdict=None):
     """Группа нежилого здания (метод, шаг 4).
 
     1. есть сервисы К, ОД, П внутри контура → одна группа с приоритетом П → ОД → К;
@@ -66,7 +107,7 @@ def building_group(found, zone, rules):
     3. иначе X.
     found — множество групп сервисов, найденных внутри контура.
     """
-    return 'П' if 'П' in found else 'ОД' if 'ОД' in found else 'К' if 'К' in found else zone_group(zone, rules)
+    return 'П' if 'П' in found else 'ОД' if 'ОД' in found else 'К' if 'К' in found else zone_group(zone, rules, zdict)
 
 
 def load_norms(path=None):

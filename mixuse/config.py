@@ -15,13 +15,13 @@ class ConfigError(UserMessage, ValueError):
     """Ошибка в файле настроек — сообщение для пользователя."""
 
 
-_PATH_KEYS = ('blocks', 'buildings', 'zones', 'services', 'service_groups')
+_PATH_KEYS = ('zone_dictionary', 'blocks', 'buildings', 'zones', 'services', 'service_groups')
 _YES = {'да', 'yes', 'true', 'вкл', '1'}
 _NO = {'нет', 'no', 'false', 'выкл', '0'}
 _KNOWN_KEYS = {'name', 'title', 'mode', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field', 'zones',
                'zone_field', 'zone_rules', 'block_zone_field', 'count_prefix', 'capacity_prefix', 'fields',
                'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'output', 'rules', 'param_sources', 'explore',
-               'provision'}
+               'provision', 'zone_dictionary'}
 RULES = ('v4', 'v5')   # правила расчёта: v4 — совместимость с ноутбуком v4; v5 — раздел 4 ТЗ (по умолчанию)
 
 
@@ -142,6 +142,12 @@ def finish_config(cfg, base, source):
     except (OSError, ValueError) as e:
         raise ConfigError(str(e))
     cfg['provision'] = _provision(cfg.get('provision'), base)
+    if cfg['rules'] == 'v5':                   # ТЗ 18.5: коды зон — по словарю zone_dictionary.csv, ручные правила поверх
+        from .groups import load_zone_dictionary
+        try:
+            cfg['_zone_dict'] = load_zone_dictionary(cfg.get('zone_dictionary'))
+        except (OSError, ValueError) as e:
+            raise ConfigError(str(e))
     cfg['_path'] = source
     return cfg
 

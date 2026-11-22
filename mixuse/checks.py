@@ -88,15 +88,21 @@ def check_config(cfg):
             else:
                 codes = sorted(df[zf].dropna().astype(str).unique())
                 rules = cfg.get('zone_rules') or []
-                if not rules:
+                if not rules and not cfg.get('_zone_dict'):
                     warn.append('Правила зон не заданы (zone_rules:): все нежилые здания без сервисов получат группу X.')
                 for prefix, grp in rules:
                     if not any(c.startswith(prefix) for c in codes):
                         warn.append(f'Правило зон «{prefix}… → {grp}» не подходит ни к одному коду зоны.')
-                hit = {c: next((g for pr, g in rules if c.startswith(pr)), 'X') for c in codes}
-                info.append('зона → группа нежилого здания без сервисов:\n      ' + '\n      '.join(f'{c} → {g}' for c, g in hit.items()))
+                from .groups import zone_match
+                hit = {c: zone_match(c, rules, cfg.get('_zone_dict')) for c in codes}
+                info.append('зона → группа нежилого здания без сервисов (X — прочее):\n      ' + '\n      '.join(
+                    f'{c} → {g}' + (f' ({how})' if how else '') for c, (g, how, _) in hit.items()))
     elif mode == 'layers' and cfg.get('block_zone_field'):
         info.append(f'зона квартала — поле «{cfg["block_zone_field"]}» слоя кварталов')
+    elif mode == 'layers' and cfg.get('rules') == 'v5':      # ТЗ 18.5: без зон расчёт не идёт
+        err.append('Нет зон: укажите в анкете слой зон (землепользование — ПЗЗ или функциональные зоны генплана: файл и поле '
+                   'кода) или поле зоны в слое кварталов (поле_в_кварталах). Без зон программа не отличит производственные '
+                   'и общественно-деловые кварталы.')
     elif mode == 'layers':
         warn.append('Слой зон не задан: нежилые здания без сервисов получат группу X.')
     # --- здания и сервисы

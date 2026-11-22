@@ -172,7 +172,7 @@ def web_json_v5(city, cfg, path, pdat=None, clip=None):
     for k in keep:
         row = t.iloc[k]
         z = row['zone']
-        zg = zone_group(z, rules)
+        zg = zone_group(z, rules, cfg.get('_zone_dict'))
         blocks.append({
             'id': int(row['block_id']), 'z': zg if zg in ('П', 'ОД') else '',
             'zc': '' if z is None or (isinstance(z, float) and np.isnan(z)) else str(z).replace('LandUse.', ''),

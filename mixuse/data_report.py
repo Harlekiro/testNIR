@@ -26,9 +26,32 @@ def data_report(city, cfg, P):
     lines, warns = [], []
     t = city['table']
     rules = cfg.get('zone_rules', [])
-    zg = np.array([zone_group(z, rules) for z in t['zone']])
+    zg = np.array([zone_group(z, rules, cfg.get('_zone_dict')) for z in t['zone']])
     lines.append(f'Кварталов: {len(t)}; в производственной зоне — {int((zg == "П").sum())}, '
                  f'в общественно-деловой — {int((zg == "ОД").sum())}, без зоны — {int(t["zone"].isna().sum())}')
+    if cfg.get('_zone_dict') is not None:     # ТЗ 18.5: как распознаны коды зон
+        from .groups import zone_match
+        codes = pd.Series(['' if z is None or (isinstance(z, float) and z != z) else str(z) for z in t['zone']])
+        cnt = codes[codes != ''].value_counts()
+        rec, unrec, conf = [], [], []
+        for c, n in cnt.items():
+            g, how, cf = zone_match(c, rules, cfg['_zone_dict'])
+            if how:
+                rec.append(f'    {c} → {g}, кварталов {n} ({how})')
+            else:
+                unrec.append(f'{c} — {n}')
+            if cf:
+                conf.append(c)
+        lines.append('Зоны, распознанные по словарю zone_dictionary.csv и правилам анкеты (код → группа, кварталов, по какой строке):')
+        lines += rec or ['    (ни одного кода не распознано)']
+        if unrec:
+            lines.append('Нераспознанные коды зон (кварталы считаются «прочими»): ' + '; '.join(unrec))
+        if conf:
+            warns.append('Коды зон подходят и под П, и под ОД: ' + ', '.join(conf) + ' — принята группа П. Чтобы выбрать '
+                         'другую, задайте правило зон в анкете (поправка поверх словаря).')
+        if not rec:
+            warns.append('Ни один код зоны не распознан: производственных и общественно-деловых кварталов нет. Добавьте '
+                         'начала кодов в zone_dictionary.csv или правила зон в анкете.')
     T = cfg.get('territory') or []
     if T:
         miss = sorted(set(T) - set(t['block_id'].astype(int)))

@@ -281,7 +281,7 @@ def compare_v5(city, T_ids, P, SCN, prov=None):
     warns = list(kit_warns) + list((prov or {}).get('_warnings', []))
     maxJ = max(out[n]['Jcity'] for n in names[1:]) if len(names) > 1 else 0
     maxN = max(out[n]['N'] for n in names[1:]) if len(names) > 1 else 0
-    if maxJ > 10 or maxN > 0.15 * popA:                    # как на демо-странице
+    if maxJ > CITY_SHARE or maxN > CITY_SHARE / 100 * popA:   # 10 % рабочих мест или жителей набора (18.2а)
         warns.append(f'Масштаб: вариант добавляет до {fmt(maxJ)} % рабочих мест всего набора и до {fmt(maxN)} жителей '
                      f'(во всём наборе {fmt(popA)}). Варианты различаются объёмом застройки сильнее, чем сочетанием функций. '
                      'Проверьте КИТ или уменьшите территорию.')

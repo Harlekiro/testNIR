@@ -292,7 +292,7 @@ def table_from_layers(L, cfg, P):
     for i in nr_idx:
         gs = found.get(i, set())
         by_service += bool(gs)
-        bdf.at[i, 'group'] = building_group(gs, blocks.at[bdf.at[i, 'block'], 'zone'], rules)
+        bdf.at[i, 'group'] = building_group(gs, blocks.at[bdf.at[i, 'block'], 'zone'], rules, cfg.get('_zone_dict'))
     if v5:
         return _finish_v5(L, cfg, P, report, blocks, s, bdf, bpolys, st, nr_idx, owner, fs, bi_types)
     for g in FUNCS + ['X']:
@@ -342,7 +342,7 @@ def _finish_v5(L, cfg, P, report, blocks, s, bdf, bpolys, st, nr_idx, owner, fs,
         if o >= 0:
             social_in[nr_idx[o]].append((ty, cap))
     rules = cfg.get('zone_rules', [])
-    zone_of_block = np.array([zone_group(z, rules) for z in blocks['zone']], dtype=object)
+    zone_of_block = np.array([zone_group(z, rules, cfg.get('_zone_dict')) for z in blocks['zone']], dtype=object)
     counters = jobs_v5(bdf, bpolys, nr_idx, st.to_numpy(), types_in, social_in, zone_of_block, bi_types, P, norms, type_group)
 
     steps = steps_report(bdf)
@@ -401,7 +401,7 @@ def table_from_table(L, cfg, P, groups):
     t['pop'] = pd.to_numeric(blocks[f['population']], errors='coerce').fillna(0)
     t['liv'] = pd.to_numeric(blocks[f['living_area']], errors='coerce').fillna(0)
     nonres = pd.to_numeric(blocks[f['non_living_area']], errors='coerce').fillna(0)
-    grp = np.array([zone_group(z, cfg.get('zone_rules', [])) for z in blocks['zone']])
+    grp = np.array([zone_group(z, cfg.get('zone_rules', []), cfg.get('_zone_dict')) for z in blocks['zone']])
     for g in FUNCS + ['X']:
         t['nr_' + g] = np.where(grp == g, nonres, 0.0)
     cp, kp = cfg.get('count_prefix', 'count_'), cfg.get('capacity_prefix', 'capacity_')
