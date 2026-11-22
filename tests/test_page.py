@@ -55,6 +55,17 @@ def test_calc_block_has_no_dom():
     assert 'document' not in block and '$(' not in block
 
 
+def test_city_share_comes_from_package(tmp_path):
+    """Порог сравнения с городом (18.2а) на странице — только из файла, который пишет пакет (compare.CITY_SHARE)."""
+    from mixuse.compare import CITY_SHARE
+    block = calc_block()
+    assert 'D.params.city_share' in block
+    assert not re.search(r'>\s*10\b|0\.1\s*\*\s*popA|0\.15\s*\*\s*popA', block), 'порог 10 % записан на странице числом'
+    for name in os.listdir(os.path.join(ROOT, 'страница', 'данные')):
+        data = json.load(open(os.path.join(ROOT, 'страница', 'данные', name), encoding='utf-8'))
+        assert data['params']['city_share'] == CITY_SHARE, name
+
+
 def run_page(data_path, jobs, tmp_path):
     js = tmp_path / 'page_calc.js'
     js.write_text(calc_block() + RUNNER, encoding='utf-8')

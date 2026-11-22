@@ -152,8 +152,10 @@ def web_json_v5(city, cfg, path, pdat=None, clip=None):
             'nb': int(row['n_bld']), 'nbd': int(row['n_bld_default']),
             'g': [[np.round(r, 2).tolist() for r in p] for p in city['polys'][k]],
         })
+    from .compare import CITY_SHARE
     params = {k: P.get(k) for k in ('kit', 'kit_source', 'kit_sp_row', 'R', 'r', 'q', 'k_liv', 'a_К', 'a_ОД', 'a_П',
                                     'n_school', 'n_kinder', 'housing_note')}
+    params['city_share'] = CITY_SHARE        # порог сравнения с городом, % (18.2а): страница берёт его отсюда, своего числа нет
     web = {'format': 'konstruktor-smeshannosti', 'format_version': 2, 'rules': 'v5',
            'name': cfg.get('title') or cfg['name'], 'code': cfg['name'], 'territory': T_ids,
            'totals': {'pop': float(t['pop'].sum()), 'jobs': float(t['jobs'].sum()), 'jobsA': float(t['jobs_A'].sum())},
