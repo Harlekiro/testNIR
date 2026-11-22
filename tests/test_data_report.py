@@ -43,24 +43,28 @@ def _report(cfg_path):
 
 
 def test_rules_key(tmp_path):
-    cfg = load_config(make_small(str(tmp_path)))
-    assert cfg['rules'] == 'v4'
-    p = make_small(str(tmp_path / 'b'))
-    _edit(p, 'rules: v4\n', '')
+    p = make_small(str(tmp_path))
     assert load_config(p)['rules'] == 'v5'                       # по умолчанию — v5 (ТЗ, раздел 9)
-    _edit(p, 'mode: layers\n', 'mode: layers\nrules: v3\n')
-    with pytest.raises(ConfigError, match='rules'):
+    _edit(p, 'mode: layers\n', 'mode: layers\nrules: v4\n')
+    with pytest.raises(ConfigError, match='v4-final'):          # правила v4 удалены
+        load_config(p)
+    p = make_small(str(tmp_path / 'b'))
+    _edit(p, 'mode: layers\n', 'mode: table\n')
+    with pytest.raises(ConfigError, match='layers'):
         load_config(p)
 
 
-def test_mixed_crs_is_error_in_v5_warning_in_v4(tmp_path):
-    p4 = make_small(str(tmp_path / 'a'), other_crs=WGS)
-    err, warn, _ = check_config(load_config(p4))
-    assert not err and any('разных системах координат' in w for w in warn)
-    p5 = make_small(str(tmp_path / 'b'), other_crs=WGS)
-    _edit(p5, 'rules: v4', 'rules: v5')
-    err, _, _ = check_config(load_config(p5))
+def test_mixed_crs_is_error(tmp_path):
+    p = make_small(str(tmp_path), other_crs=WGS)
+    err, _, _ = check_config(load_config(p))
     assert any('4.1.2' in e for e in err)
+
+
+def test_no_zones_is_error(tmp_path):
+    p = make_small(str(tmp_path))
+    _edit(p, 'zones: data/zones.geojson\n', '')
+    err, _, _ = check_config(load_config(p))
+    assert any('Нет зон' in e for e in err)
 
 
 def test_param_sources(tmp_path):
@@ -91,7 +95,8 @@ def test_small_report_by_hand(small_cfg):
 def test_small_report_population_rule_423(tmp_path):
     """Поле жителей задано; у дома 5 этажей (кв. 11) оно пустое.
     Встроенные помещения: B = min(2 · 100; 0,5 · 400) = 200 м²; жилая площадь (400 · 5 − 200) · 0,7 = 1 260 м²;
-    прибавка 1 260 ÷ 30 = 42 жителя к 2 (дом в кв. 12) → больше 1 % → предупреждение."""
+    прибавка 1 260 ÷ 30 = 42 жителя к 2 (дом в кв. 12) → больше 1 % → расчёт останавливается (4.2.3)."""
+    from mixuse.blocks import DataError
     p = make_small(str(tmp_path))
     bpath = os.path.join(str(tmp_path), 'data', 'buildings.geojson')
     fc = json.load(open(bpath, encoding='utf-8'))
@@ -99,10 +104,8 @@ def test_small_report_population_rule_423(tmp_path):
         f['properties']['pop'] = pop
     json.dump(fc, open(bpath, 'w', encoding='utf-8'), ensure_ascii=False)
     _edit(p, 'liv_area}', 'liv_area, population: pop}')
-    text, warns = _report(p)
-    assert 'Жилые дома без числа жителей: 1 из 2 (50.0 %)' in text
-    assert '+42 к 2 (2100.00 %)' in text
-    assert any('больше 1 %' in w for w in warns)
+    with pytest.raises(DataError, match=r'4\.2\.3.*у 1 жилых домов.*добавил бы 42 жителей.*больше 1 %'):
+        _report(p)
 
 
 # ---------- настройки трёх наборов v5 ----------

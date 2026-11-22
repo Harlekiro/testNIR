@@ -9,7 +9,7 @@ import re
 import pandas as pd
 
 from .geometry import read_layer, describe_crs
-from .groups import load_group_table
+from .groups import load_group_table, load_zone_dictionary, zone_match
 from .params import DEFAULTS, SCENARIOS, PARAM_HELP
 
 _EXT = ('.geojson', '.gpkg', '.json')
@@ -141,19 +141,21 @@ def make_config(data_dir, name=None, out=None):
              if pd.api.types.is_object_dtype(m['df'][c]) or pd.api.types.is_string_dtype(m['df'][c])]
     zf = _pick(_ZONE_FIELD_HINTS, zcols) if m else None
     w(f'zone_field: {zf or ""}' + (f'   # ПРОВЕРЬТЕ: поле кода зоны; текстовые поля: {", ".join(map(str, zcols))}' if m else ''))
-    w('zone_rules:              # нежилое здание без сервисов: «код зоны начинается с …» → группа (К, ОД, П); иначе X')
-    w('  # "ТП": П              # пример')
+    w('zone_rules:              # по желанию: поправка поверх словаря zone_dictionary.csv — «код зоны начинается с …» → группа')
+    w('  # "Т3Ж": ОД            # пример; коды зон программа распознаёт по словарю сама (ТЗ 18.5)')
     if m and zf:
         vals = m['df'][zf].dropna().astype(str).value_counts()
-        w(f'  # коды зон в слое ({len(vals)}):')
+        zd = load_zone_dictionary()
+        w(f'  # коды зон в слое ({len(vals)}) → группа по словарю (X — прочее):')
         for v, n in vals.head(40).items():
-            w(f'  #   {v}  ({n})')
+            g, how, _ = zone_match(v, [], zd)
+            w(f'  #   {v}  ({n}) → {g}' + (f'  [{how}]' if how else ''))
     w('')
     w('territory: []            # номера кварталов территории, например [12, 13]; номера — в results/<код>_кварталы.geojson')
     w('')
     w('params:                  # параметры метода; раскомментируйте, чтобы изменить значение по умолчанию')
     for k, v in DEFAULTS.items():
-        vv = ('да' if v else 'нет') if isinstance(v, bool) else v
+        vv = ('да' if v else 'нет') if isinstance(v, bool) else ('' if v is None else v)
         w(f'  # {k}: {vv}' + ' ' * max(1, 22 - len(k) - len(str(vv))) + f'# {PARAM_HELP.get(k, "")}')
     w('')
     w('scenarios:               # варианты: доли поэтажной площади, %, по группам Ж, К, ОД, П')

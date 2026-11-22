@@ -75,10 +75,10 @@ def make_small(folder, other_crs=UTM, territory=(10,), extra=''):
         ('Polygon', sq(-10, -10, 120), {'code': 'ТП1'}), ('Polygon', sq(190, -10, 120), {'code': 'ТД1'}),
         ('Polygon', sq(990, -10, 120), {'code': 'ТР2'})], other_crs)
     cfg = os.path.join(folder, 'small.yaml')
+    kit = '' if 'params:' in extra else 'params: {kit: 1.4, kit_source: пример}\n'
     with open(cfg, 'w', encoding='utf-8') as f:
         f.write(f"""name: small
 mode: layers
-rules: v4
 blocks: data/blocks.geojson
 block_id_field: block_id
 buildings: data/buildings.geojson
@@ -91,8 +91,20 @@ territory: {list(territory)}
 scenarios:
   "С1 Ж+ОД": {{Ж: 60, К: 10, ОД: 30, П: 0}}
   "С2 ОД+П": {{Ж: 0, К: 10, ОД: 40, П: 50}}
-{extra}""")
+{kit}{extra}""")
     return cfg
+
+
+def same_strings(ref, got):
+    """Таблицы совпадают строка в строку (значения сравниваются как текст)."""
+    assert list(ref.columns) == list(got.columns)
+    assert list(map(str, ref.index)) == list(map(str, got.index))
+    bad = ref.to_numpy() != got.to_numpy()
+    assert not bad.any(), ref.where(bad).stack().to_dict()
+
+
+ETALON_V5 = os.path.join(ROOT, 'tests', 'etalon', 'v5')                       # эталоны правил раздела 4 (запасной 4.7.3)
+ETALON_BLOCKSNET = os.path.join(ROOT, 'tests', 'etalon', 'v5_blocksnet')      # то же с точным расчётом blocksnet
 
 
 @pytest.fixture

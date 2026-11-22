@@ -50,7 +50,6 @@ def _prepare(cfg):
 
 def _report_lines(cfg, city, info=None):
     lines = [f'Набор данных: {cfg["name"]}', f'Настройки: {cfg["_path"]}', '', 'Отчёт о подготовке данных:']
-    lines.append(f'  правила расчёта: {cfg.get("rules", "v5")}')
     for n in city.get('crs_notes', []):
         lines.append(f'  пересчёт координат: {n}')
     for k, v in city['report'].items():
@@ -120,9 +119,8 @@ def cmd_blocks(args):
         _say(s)
     files = [export.blocks_csv(city, export.out_path(out, code, 'таблица_кварталов.csv')),
              export.blocks_geojson(city, export.out_path(out, code, 'кварталы.geojson')),
-             export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt'))]
-    if cfg['rules'] == 'v5':
-        files.append(export.buildings_csv(city, export.out_path(out, code, 'здания.csv')))
+             export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt')),
+             export.buildings_csv(city, export.out_path(out, code, 'здания.csv'))]
     _say('\nСохранено:'); [_say('  ' + f) for f in files]
     return 0
 
@@ -138,63 +136,50 @@ def cmd_compare(args):
     P, SCN, T = cfg['params'], cfg['scenarios'], cfg['territory']
     out = _out_dir(cfg, args); code = cfg['name']
     table, info, det = compare(city, T, P, SCN)
-    v5 = cfg['rules'] == 'v5'
-    prov_note = None
-    if v5:      # раздел 12: blocksnet здесь → окружение с blocksnet → оценка → запасной 4.7.3 (bn_bridge)
-        from .bn_bridge import school_provision
-        t0 = time.time()
-        prov, prov_note = school_provision(cfg, city, T, det, near=args.near, say=_say)
-        if prov:
-            _say(f'Школы и сады: {prov.get("_source", "")} ({time.time() - t0:.0f} с)')
-            table, info, det = compare(city, T, P, SCN, prov=prov)
-    warns = info.pop('предупреждения', []) if v5 else []
+    from .bn_bridge import school_provision   # раздел 12: blocksnet здесь → окружение с blocksnet → оценка → запасной 4.7.3
+    t0 = time.time()
+    prov, prov_note = school_provision(cfg, city, T, det, near=args.near, say=_say)
+    if prov:
+        _say(f'Школы и сады: {prov.get("_source", "")} ({time.time() - t0:.0f} с)')
+        table, info, det = compare(city, T, P, SCN, prov=prov)
+    warns = info.pop('предупреждения', [])
     if prov_note:
         warns.append(prov_note)
     lines = _report_lines(cfg, city, info)
     lines += ['', f'Территория: кварталы {T}'] + [f'  {k}: {v}' for k, v in info.items()]
     lines += [f'  ! {w}' for w in warns]
-    if v5:
-        lines += ['', 'Вывод по вариантам (4.7.0):'] + [f'  {n}: {c}' for n, c in det['conclusions'].items()]
+    lines += ['', 'Вывод по вариантам (4.7.0):'] + [f'  {n}: {c}' for n, c in det['conclusions'].items()]
     for s in lines[3:]:
         _say(s)
-    files = [export.blocks_csv(city, export.out_path(out, code, 'таблица_кварталов.csv'))]
-    if v5:      # краткая таблица 4.7.0 — основной вывод; подробная — отдельным файлом
-        files += [export.table_csv(det['short'], export.out_path(out, code, 'сравнение_вариантов.csv')),
-                  export.table_csv(table, export.out_path(out, code, 'сравнение_подробно.csv'))]
-    else:
-        files.append(export.table_csv(table, export.out_path(out, code, 'сравнение_вариантов.csv')))
+    files = [export.blocks_csv(city, export.out_path(out, code, 'таблица_кварталов.csv')),
+             export.table_csv(det['short'], export.out_path(out, code, 'сравнение_вариантов.csv')),   # краткая 4.7.0
+             export.table_csv(table, export.out_path(out, code, 'сравнение_подробно.csv'))]
     with pd.option_context('display.width', 250, 'display.max_columns', 20, 'display.max_colwidth', 40):
-        _say('\nСравнение вариантов:'); _say((det['short'].drop(index='Вывод') if v5 else table).to_string())
-        if v5:
-            _say('\nПодробно:'); _say(table.to_string())
+        _say('\nСравнение вариантов:'); _say(det['short'].drop(index='Вывод').to_string())
+        _say('\nПодробно:'); _say(table.to_string())
         if not args.fast:
             stab = sensitivity(city, T, P, SCN)
             files.append(export.table_csv(stab, export.out_path(out, code, 'устойчивость.csv'), index=False))
             _say('\nШаг 7. Устойчивость:'); _say(stab.to_string(index=False))
             bs = builtin_sensitivity(L, cfg, P, T, SCN)
-            if bs is not None:
-                files.append(export.table_csv(bs, export.out_path(out, code, 'встроенные.csv'), index=False))
-                _say('\nШаг 7б. Встроенные помещения:'); _say(bs.to_string(index=False))
-            if cfg['rules'] == 'v5':
-                for title, df, suffix in [
-                        ('4.8.3. Основная оценка и нижняя граница', estimates_check(city, T, P, SCN), 'оценки.csv'),
-                        ('4.8.4. Сравнение со статистикой', stats_check(city, P), 'статистика.csv'),
-                        ('4.8.5. Порог площади одноэтажного здания производственной зоны',
-                         threshold_check(L, cfg, P, T, SCN), 'порог_цеха.csv')]:
-                    if df is not None:
-                        files.append(export.table_csv(df, export.out_path(out, code, suffix), index=False))
-                        _say(f'\n{title}:'); _say(df.to_string(index=False))
+            files.append(export.table_csv(bs, export.out_path(out, code, 'встроенные.csv'), index=False))
+            _say('\nШаг 7б. Встроенные помещения:'); _say(bs.to_string(index=False))
+            for title, df, suffix in [
+                    ('4.8.3. Основная оценка и нижняя граница', estimates_check(city, T, P, SCN), 'оценки.csv'),
+                    ('4.8.4. Сравнение со статистикой', stats_check(city, P), 'статистика.csv'),
+                    ('4.8.5. Порог площади одноэтажного здания производственной зоны',
+                     threshold_check(L, cfg, P, T, SCN), 'порог_цеха.csv')]:
+                if df is not None:
+                    files.append(export.table_csv(df, export.out_path(out, code, suffix), index=False))
+                    _say(f'\n{title}:'); _say(df.to_string(index=False))
     show = args.show or (list(SCN)[1] if len(SCN) > 1 else list(SCN)[0])
     if show not in SCN:
         raise ConfigError(f'--show: варианта «{show}» нет. Есть: {", ".join(SCN)}')
     files += [export.map_png(city, det, show, P['R'], cfg.get('title') or code, export.out_path(out, code, f'карта_{show.split()[0]}.png')),
               export.blocks_geojson(city, export.out_path(out, code, 'кварталы.geojson'), det, SCN),
-              export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt'))]
-    if cfg['rules'] == 'v5':
-        files.append(export.buildings_csv(city, export.out_path(out, code, 'здания.csv')))
-        _say('\nФайл для страницы: python -m mixuse page ' + cfg['_path'])
-    else:
-        files.append(export.web_json(city, cfg, export.out_path(out, code, 'для_страницы.json')))
+              export.report_txt(lines, export.out_path(out, code, 'отчёт_подготовки.txt')),
+              export.buildings_csv(city, export.out_path(out, code, 'здания.csv'))]
+    _say('\nФайл для страницы: python -m mixuse page ' + cfg['_path'])
     _say('\nСохранено:'); [_say('  ' + f) for f in files]
     return 0
 
@@ -242,8 +227,6 @@ def explore_settings(cfg, args):
 def cmd_explore(args):
     from .scenarios import enumerate_shares, explore, apply_filters, explore_summary
     cfg = load_config(args.config)
-    if cfg['rules'] != 'v5':
-        raise ConfigError('Перебор сочетаний считает показатели правил v5 (rules: v5).')
     if args.territory:
         cfg['territory'] = [int(x) for x in args.territory.split(',') if x.strip()]
     groups, step, mx, mn, filters = explore_settings(cfg, args)
@@ -330,11 +313,9 @@ def cmd_provision(args):
 
 
 def cmd_page(args):
-    """Этап 7: файл для страницы «Конструктор смешанности» (страница/конструктор.html) по правилам v5."""
+    """Этап 7: файл для страницы «Конструктор смешанности» (страница/конструктор.html)."""
     from .provision_estimate import load_page_data
     cfg = load_config(args.config)
-    if cfg['rules'] != 'v5':
-        raise ConfigError('Файл для страницы правил v5: в настройках нужен rules: v5 (для v4 — команда compare).')
     if args.territory:
         cfg['territory'] = [int(x) for x in args.territory.split(',') if x.strip()]
     L, city = _prepare(cfg)
@@ -453,7 +434,7 @@ def build_parser():
     pv.add_argument('--out', help='папка результатов (по умолчанию results)')
     pv.add_argument('--territory', help='номера кварталов территории через запятую')
     pv.set_defaults(fn=cmd_provision)
-    pg = sub.add_parser('page', help='файл для страницы «Конструктор смешанности» (правила v5, этап 7)')
+    pg = sub.add_parser('page', help='файл для страницы «Конструктор смешанности» (этап 7)')
     pg.add_argument('config', help='файл настроек, например configs/vysotsk.yaml')
     pg.add_argument('--out', help='папка результатов (по умолчанию results)')
     pg.add_argument('--file', help='куда записать файл (вместо results/<код>_для_страницы.json)')

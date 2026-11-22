@@ -180,14 +180,30 @@ def build_matrix(cfg, graph_type=GRAPH_TYPE, retries=4, say=print, osm_file=None
 
 
 def matrix_paths(cfg, graph_type=GRAPH_TYPE):
+    """Матрица (matrix_<граф>.npz: время в пути, мин, и номера кварталов) и её описание (matrix_<граф>.json)."""
     d = access_dir(cfg)
-    return os.path.join(d, f'matrix_{graph_type}.pickle'), os.path.join(d, f'matrix_{graph_type}.json')
+    return os.path.join(d, f'matrix_{graph_type}.npz'), os.path.join(d, f'matrix_{graph_type}.json')
+
+
+def write_matrix_npz(path, mx):
+    """Матрица в формате numpy .npz без pickle: values — время в пути (тип как в blocksnet, float16), ids — номера
+    кварталов (строки и столбцы в одном порядке). Читается read_matrix_npz."""
+    if list(mx.index) != list(mx.columns):
+        raise ValueError('Матрица доступности: номера строк и столбцов должны совпадать по порядку.')
+    np.savez_compressed(path, values=mx.to_numpy(), ids=np.asarray(mx.index, dtype=np.int64))
+
+
+def read_matrix_npz(path):
+    """Матрица из .npz (allow_pickle=False — файл не может выполнить код при чтении)."""
+    with np.load(path, allow_pickle=False) as z:
+        ids = z['ids'].tolist()
+        return pd.DataFrame(z['values'], index=pd.Index(ids), columns=pd.Index(ids))
 
 
 def save_matrix(cfg, mx, meta, graph_type=GRAPH_TYPE):
     pm, pj = matrix_paths(cfg, graph_type)
     os.makedirs(os.path.dirname(pm), exist_ok=True)
-    mx.to_pickle(pm)
+    write_matrix_npz(pm, mx)
     with open(pj, 'w', encoding='utf-8') as f:
         json.dump({k: v for k, v in meta.items() if k != 'block_id'}, f, ensure_ascii=False, indent=1)
     return pm, pj
@@ -214,7 +230,7 @@ def load_matrix(cfg, block_ids, graph_type=GRAPH_TYPE):
     pm, pj = matrix_paths(cfg, graph_type)
     if not os.path.exists(pm):
         raise BlocksnetError(f'Нет матрицы доступности {pm}. Постройте её: python -m mixuse access {cfg["_path"]}')
-    mx = pd.read_pickle(pm)
+    mx = read_matrix_npz(pm)
     meta = json.load(open(pj, encoding='utf-8')) if os.path.exists(pj) else {}
     errs = check_matrix(mx, meta, block_ids, file_sha256(cfg['blocks']))
     if errs:

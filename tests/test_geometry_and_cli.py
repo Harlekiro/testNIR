@@ -76,9 +76,9 @@ def test_cli_full_run(tmp_path, capsys):
     assert main(['blocks', cfg_path, '--out', out]) == 0
     assert main(['compare', cfg_path, '--out', out]) == 0
     files = sorted(os.listdir(out))
-    for name in ['small_таблица_кварталов.csv', 'small_сравнение_вариантов.csv', 'small_устойчивость.csv',
-                 'small_встроенные.csv', 'small_кварталы.geojson', 'small_для_страницы.json',
-                 'small_отчёт_подготовки.txt', 'small_карта_С2.png']:
+    for name in ['small_таблица_кварталов.csv', 'small_сравнение_вариантов.csv', 'small_сравнение_подробно.csv',
+                 'small_устойчивость.csv', 'small_встроенные.csv', 'small_оценки.csv', 'small_порог_цеха.csv',
+                 'small_кварталы.geojson', 'small_здания.csv', 'small_отчёт_подготовки.txt', 'small_карта_С2.png']:
         assert name in files, name
     gj = json.load(open(os.path.join(out, 'small_кварталы.geojson'), encoding='utf-8'))
     assert gj['crs']['properties']['name'].endswith('32635')

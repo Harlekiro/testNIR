@@ -1,5 +1,4 @@
 # Высоцк. Данные — examples/vysotsk/ (архив метод_сравнения_вариантов_v4.zip); все слои в градусах (EPSG:4326).
-# Настройки для правил v5; настройки ноутбука v4 — configs/legacy/vysotsk.yaml.
 name: vysotsk
 title: Высоцк
 mode: layers

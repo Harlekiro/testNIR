@@ -10,7 +10,7 @@ import pytest
 
 from test_rules_v5 import make_v5, build, CIRCLE
 from mixuse.compare import compare, conclusion, choose_kit, environment, territory_indices, KitError
-from mixuse.params import SCENARIOS_V5
+from mixuse.params import SCENARIOS
 from mixuse.config import load_config, param_origins, ConfigError
 
 
@@ -22,7 +22,7 @@ def test_default_scenarios_v5(tmp_path):
     with open(p, 'w', encoding='utf-8') as f:
         f.write(text[:start] + text[end + 1:])                # без своих вариантов → пять вариантов 4.6.1
     cfg = load_config(p)
-    assert cfg['scenarios'] == SCENARIOS_V5
+    assert cfg['scenarios'] == SCENARIOS
     assert list(cfg['scenarios']) == ['Ж+К', 'Ж+К+ОД', 'К+ОД', 'ОД+П', 'Ж+П']
     assert cfg['scenarios']['Ж+К+ОД'] == {'Ж': 75, 'К': 5, 'ОД': 20, 'П': 0}
 

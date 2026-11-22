@@ -7,7 +7,7 @@ import os
 
 import yaml
 
-from .params import DEFAULTS, SCENARIOS, SCENARIOS_V5, defaults, TEXT_PARAMS, SP42_B1
+from .params import SCENARIOS, defaults, TEXT_PARAMS, SP42_B1
 from .groups import load_group_table
 
 
@@ -19,10 +19,10 @@ _PATH_KEYS = ('zone_dictionary', 'blocks', 'buildings', 'zones', 'services', 'se
 _YES = {'да', 'yes', 'true', 'вкл', '1'}
 _NO = {'нет', 'no', 'false', 'выкл', '0'}
 _KNOWN_KEYS = {'name', 'title', 'mode', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field', 'zones',
-               'zone_field', 'zone_rules', 'block_zone_field', 'count_prefix', 'capacity_prefix', 'fields',
+               'zone_field', 'zone_rules', 'block_zone_field', 'fields',
                'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'output', 'rules', 'param_sources', 'explore',
                'provision', 'zone_dictionary'}
-RULES = ('v4', 'v5')   # правила расчёта: v4 — совместимость с ноутбуком v4; v5 — раздел 4 ТЗ (по умолчанию)
+RULES = ('v5',)   # правила расчёта — раздел 4 ТЗ; правила v4 удалены (последняя версия с ними — тег git v4-final)
 
 
 def _yes_no(v, key):
@@ -36,13 +36,13 @@ def _yes_no(v, key):
     raise ConfigError(f'Параметр {key}: ожидается «да» или «нет», получено «{v}».')
 
 
-def merge_params(user, rules='v4'):
-    """Параметры по умолчанию для правил v4 или v5 (params.py) + переопределения из настроек набора данных."""
-    base = defaults(rules)
+def merge_params(user):
+    """Параметры по умолчанию (params.py) + переопределения из настроек набора данных."""
+    base = defaults()
     P = dict(base)
     for k, v in (user or {}).items():
         if k not in base:
-            raise ConfigError(f'Неизвестный параметр «{k}» для правил {rules}. Допустимые: {", ".join(base)}.')
+            raise ConfigError(f'Неизвестный параметр «{k}». Допустимые: {", ".join(base)}.')
         d = base[k]
         if k in TEXT_PARAMS:                   # строковые параметры
             P[k] = None if v is None else str(v).strip()
@@ -118,19 +118,23 @@ def finish_config(cfg, base, source):
             cfg[k] = os.path.normpath(os.path.join(base, v))
     cfg.setdefault('name', os.path.splitext(os.path.basename(source))[0])
     cfg.setdefault('mode', 'layers')
+    if cfg['mode'] != 'layers':
+        raise ConfigError(f'mode: «{cfg["mode"]}» — допустимо только layers (слои кварталов, зданий, сервисов и зон); '
+                          'режим готовой таблицы кварталов был только в правилах v4 (тег git v4-final).')
     cfg['rules'] = str(cfg.get('rules') or 'v5').strip()
     if cfg['rules'] not in RULES:
-        raise ConfigError(f'rules: «{cfg["rules"]}» — допустимо v4 (совместимость с ноутбуком v4) или v5.')
+        raise ConfigError(f'rules: «{cfg["rules"]}» — допустимо только v5. Правила v4 удалены; '
+                          'последняя версия программы с ними — тег git v4-final.')
     cfg['fields'] = cfg.get('fields') or {}
     cfg.setdefault('capacity_field', 'capacity')
     cfg['_user_params'] = sorted((cfg.get('params') or {}).keys())    # заданы пользователем (ТЗ 5.1)
-    cfg['params'] = merge_params(cfg.get('params'), cfg['rules'])
+    cfg['params'] = merge_params(cfg.get('params'))
     src = cfg.get('param_sources') or {}
     if not isinstance(src, dict) or set(src) - set(cfg['params']):
         raise ConfigError('param_sources: источники значений параметров в виде «параметр: источник»; '
                           f'неизвестные параметры: {", ".join(sorted(set(src) - set(cfg["params"]))) if isinstance(src, dict) else src}.')
     cfg['param_sources'] = {k: str(v) for k, v in src.items()}
-    cfg['scenarios'] = cfg.get('scenarios') or dict(SCENARIOS_V5 if cfg['rules'] == 'v5' else SCENARIOS)
+    cfg['scenarios'] = cfg.get('scenarios') or dict(SCENARIOS)
     cfg['zone_rules'] = _rules(cfg.get('zone_rules'))
     terr = cfg.get('territory') or []
     try:
@@ -142,12 +146,11 @@ def finish_config(cfg, base, source):
     except (OSError, ValueError) as e:
         raise ConfigError(str(e))
     cfg['provision'] = _provision(cfg.get('provision'), base)
-    if cfg['rules'] == 'v5':                   # ТЗ 18.5: коды зон — по словарю zone_dictionary.csv, ручные правила поверх
-        from .groups import load_zone_dictionary
-        try:
-            cfg['_zone_dict'] = load_zone_dictionary(cfg.get('zone_dictionary'))
-        except (OSError, ValueError) as e:
-            raise ConfigError(str(e))
+    from .groups import load_zone_dictionary   # ТЗ 18.5: коды зон — по словарю zone_dictionary.csv, ручные правила поверх
+    try:
+        cfg['_zone_dict'] = load_zone_dictionary(cfg.get('zone_dictionary'))
+    except (OSError, ValueError) as e:
+        raise ConfigError(str(e))
     cfg['_path'] = source
     return cfg
 

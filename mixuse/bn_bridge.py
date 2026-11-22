@@ -33,7 +33,7 @@ def blocksnet_python():
 
 
 _CFG_KEYS = ('name', 'title', 'mode', 'rules', 'blocks', 'block_id_field', 'buildings', 'services', 'service_type_field',
-             'zones', 'zone_field', 'zone_rules', 'block_zone_field', 'count_prefix', 'capacity_prefix', 'fields',
+             'zones', 'zone_field', 'zone_rules', 'block_zone_field', 'fields',
              'territory', 'params', 'scenarios', 'service_groups', 'capacity_field', 'param_sources', 'provision',
              'zone_dictionary')
 

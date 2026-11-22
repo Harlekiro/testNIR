@@ -22,7 +22,7 @@ def _pct(n, total):
 
 
 def data_report(city, cfg, P):
-    """Возвращает (строки отчёта, предупреждения). Для режима «таблица» — только сведения о кварталах."""
+    """Возвращает (строки отчёта, предупреждения)."""
     lines, warns = [], []
     t = city['table']
     rules = cfg.get('zone_rules', [])
@@ -60,17 +60,13 @@ def data_report(city, cfg, P):
             warns.append(f'Кварталов территории {miss} нет в слое кварталов.')
     if P.get('data_note'):                    # ограничение территории, которое программа не проверяет (ТЗ 17)
         lines.append(f'Ограничение территории (программой не проверяется): {P["data_note"]}')
-    if cfg.get('rules', 'v5') == 'v5':        # ТЗ 18.3: КИТ и его источник
-        from .compare import kit_value, KitError
-        try:
-            kit, src = kit_value(P)
-            lines.append(f'КИТ варианта: {kit:g} — {src}'.replace('.', ',', 1))
-        except KitError as e:
-            warns.append(str(e))
-    det = city.get('detail')
-    if det is None:
-        lines.append('Режим «таблица»: слоёв зданий и сервисов нет, отчёт о зданиях не составляется.')
-        return lines, warns
+    from .compare import kit_value, KitError   # ТЗ 18.3: КИТ и его источник
+    try:
+        kit, src = kit_value(P)
+        lines.append(f'КИТ варианта: {kit:g} — {src}'.replace('.', ',', 1))
+    except KitError as e:
+        warns.append(str(e))
+    det = city['detail']
     b, bpolys, s = det['buildings'], det['bpolys'], det['services']
     sa = det.get('services_all')
     if sa is not None and 'group' in sa:      # ТЗ 18.3: типы не из таблицы групп — с числом объектов

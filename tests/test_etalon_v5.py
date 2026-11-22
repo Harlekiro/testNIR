@@ -1,6 +1,6 @@
-"""Эталоны правил v5 (results_v5/, этап 5): пакет и рабочий ноутбук воспроизводят их.
+"""Эталоны правил v5 (tests/etalon/v5/, этап 5): пакет и рабочий ноутбук воспроизводят их.
 
-Эталоны посчитаны командой `python -m mixuse compare configs/<код>.yaml --out results_v5/<код>` (19.11.2026).
+Эталоны посчитаны командой `python -m mixuse compare configs/<код>.yaml --out tests/etalon/v5/<код>` (19.11.2026).
 Петербург: проверяются таблица кварталов, сравнение, шаг 7 и 4.8.3–4.8.4; шаг 7б и 4.8.5 (по 3–4 пересчёта
 таблицы, около 3 минут) — только для Высоцка и Гатчины. Если данных набора нет — тест пропускается.
 """
@@ -12,15 +12,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from conftest import ROOT
-from test_etalon import same_strings
+from conftest import ROOT, ETALON_V5, same_strings
 from test_notebook import run_notebook
 from mixuse.config import load_config
 from mixuse.blocks import load_layers, build_table
 from mixuse.compare import compare
 from mixuse.checks import sensitivity, builtin_sensitivity, estimates_check, stats_check, threshold_check
 
-ETALON = os.path.join(ROOT, 'results_v5')
+ETALON = ETALON_V5
 SETS = ['vysotsk', 'gatchina_layers', 'spb_full']
 SLOW = {'spb_full'}
 pytestmark = pytest.mark.filterwarnings('ignore:FigureCanvasAgg is non-interactive')

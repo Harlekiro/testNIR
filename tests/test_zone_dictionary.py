@@ -1,11 +1,11 @@
 """Проверка 18.5: словарь зон zone_dictionary.csv без ручных правил относит кварталы трёх наборов к тем же группам
-(П, ОД, прочее), что прежние ручные правила зон. Зона квартала — из эталонной таблицы кварталов results_v5."""
+(П, ОД, прочее), что прежние ручные правила зон. Зона квартала — из эталонной таблицы кварталов tests/etalon/v5."""
 import os
 
 import pandas as pd
 import pytest
 
-from conftest import ROOT
+from conftest import ETALON_V5
 from mixuse.groups import zone_match, load_zone_dictionary
 
 OLD_RULES = {
@@ -13,7 +13,6 @@ OLD_RULES = {
     'gatchina_layers': [('LandUse.INDUSTRIAL', 'П'), ('LandUse.BUSINESS', 'ОД')],
     'spb_full': [('ТП', 'П'), ('ТД', 'ОД')],
 }
-ETALON_V5 = os.path.join(ROOT, 'results_v5')
 
 
 @pytest.mark.parametrize('code', list(OLD_RULES))

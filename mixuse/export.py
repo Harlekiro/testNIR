@@ -56,37 +56,6 @@ def blocks_geojson(city, path, det=None, SCN=None):
     return path
 
 
-# параметры, которые не нужны странице (она пересчитывает только шаги 5–6)
-_WEB_SKIP = ('S_min', 'storeys_default', 'builtin', 'builtin_s0', 'builtin_share', 'builtin_min_storeys')
-
-
-def web_json(city, cfg, path):
-    """Шаг 9. Файл данных для страницы «Конструктор смешанности» (формат ноутбука v4, format_version 1)."""
-    proj = city['proj']
-    P, SCN = cfg['params'], cfg['scenarios']
-    origin = [proj.lon0, proj.lat0, proj.kx, proj.ky] if proj else [0, 0, 1, 1]   # как перевести координаты контуров в метры
-    web = {'format': 'konstruktor-smeshannosti', 'format_version': 1,
-           'meta': {'city': cfg.get('title') or cfg['name'], 'source': 'метод_сравнения_вариантов.ipynb, шаг 9',
-                    'blocks_crs': 'градусы' if proj else f'EPSG:{city["epsg"]}'},
-           'params': {k: v for k, v in P.items() if k not in _WEB_SKIP}, 'scenarios': SCN,
-           'presets': [{'name': 'Территория из ноутбука', 'ids': [int(i) for i in cfg['territory']]}],
-           'origin': origin, 'blocks': [],
-           'pts': {'metro': np.round(city['pts']['метро'], 1).tolist(), 'stop': np.round(city['pts']['остановка'], 1).tolist()}}
-    for k, row in city['table'].iterrows():
-        web['blocks'].append({
-            'id': int(row['block_id']), 'zone': None if pd.isna(row['zone']) else str(row['zone']).replace('LandUse.', ''),
-            'area': round(float(row['area'])), 'cx': round(float(row['cx']), 1), 'cy': round(float(row['cy']), 1),
-            'pop': round(float(row['pop'])), 'liv': round(float(row['liv'])),
-            'nrK': round(float(row['nr_К'])), 'nrOD': round(float(row['nr_ОД'])), 'nrP': round(float(row['nr_П'])), 'nrX': round(float(row['nr_X'])),
-            'pK': int(row['n_К']), 'pOD': int(row['n_ОД']), 'pP': int(row['n_П']),
-            'school': round(float(row['cap_school'])), 'kinder': round(float(row['cap_kinder'])),
-            'g': [[np.round(r, 5 if proj else 1).tolist() for r in p] for p in city['orig'][k][1]],
-        })
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(web, f, ensure_ascii=False, separators=(',', ':'))
-    return path
-
-
 def map_png(city, det, show, R, title, path):
     """Шаг 8. Карта в файл PNG (командная строка: без окна на экране)."""
     import matplotlib
@@ -123,7 +92,7 @@ def map_figure(city, det, show, R, title):
 
 
 def buildings_csv(city, path):
-    """Таблица зданий (results/<код>_здания.csv, правила v5): шаг таблицы 4.4, категория и рабочие места каждого здания,
+    """Таблица зданий (results/<код>_здания.csv): шаг таблицы 4.4, категория и рабочие места каждого здания,
     координата точки на поверхности в системе координат кварталов — чтобы проверить правила на карте в QGIS
     («Добавить слой из текста с разделителями», поля x и y)."""
     d = city['detail']['buildings']
@@ -152,7 +121,7 @@ def buildings_csv(city, path):
 
 
 def web_json_v5(city, cfg, path, pdat=None, clip=None):
-    """Файл для страницы по правилам v5 (этап 7): формат демо-страницы автора (reference/демо_страница) —
+    """Файл для страницы (этап 7): формат страницы страница/конструктор.html —
     кварталы с контурами в метрах и показателями, точки метро и остановок, параметры (КИТ: kit, kit_source, kit_sp_row),
     варианты; если есть точный расчёт blocksnet «как есть» (pdat) — данные для оценки обеспеченности (provision).
     clip — оставить кварталы, центр которых не дальше clip м от центра территории (для большого города;

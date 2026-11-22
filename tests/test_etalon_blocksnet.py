@@ -1,10 +1,10 @@
-"""Эталон с точным расчётом школ и садов через blocksnet (results_v5_blocksnet/, раздел 12).
+"""Эталон с точным расчётом школ и садов через blocksnet (tests/etalon/v5_blocksnet/, раздел 12).
 
-Эталоны results_v5/ посчитаны запасным расчётом 4.7.3, чтобы тесты не зависели от blocksnet. Здесь — те же
+Эталоны tests/etalon/v5/ посчитаны запасным расчётом 4.7.3, чтобы тесты не зависели от blocksnet. Здесь — те же
 сравнения, но строки 12.5 посчитаны blocksnet по всему набору (без ускорения 12.4), и обеспеченность «как есть».
 Эталоны посчитаны 20.11.2026 в окружении с blocksnet (Python 3.11); Петербург — около 18 мин:
-    python -m mixuse compare configs/<код>.yaml --out results_v5_blocksnet/<код> --fast
-    python -m mixuse provision configs/<код>.yaml --out results_v5_blocksnet/<код>
+    python -m mixuse compare configs/<код>.yaml --out tests/etalon/v5_blocksnet/<код> --fast
+    python -m mixuse provision configs/<код>.yaml --out tests/etalon/v5_blocksnet/<код>
 (из папки оставлены только файлы сравнения и обеспеченности).
 Если blocksnet не установлен или нет данных и матрицы набора — тесты пропускаются.
 """
@@ -13,14 +13,13 @@ import os
 import pandas as pd
 import pytest
 
-from conftest import ROOT
-from test_etalon import same_strings
+from conftest import ROOT, ETALON_BLOCKSNET, same_strings
 from mixuse.config import load_config
 from mixuse.blocks import load_layers, build_table
 from mixuse.compare import compare
 from mixuse import provision_bn as pb
 
-ETALON = os.path.join(ROOT, 'results_v5_blocksnet')
+ETALON = ETALON_BLOCKSNET
 SETS = ['vysotsk', 'gatchina_layers', 'spb_full']
 STR = dict(dtype=str, keep_default_na=False)
 pytestmark = pytest.mark.filterwarnings('ignore:FigureCanvasAgg is non-interactive')

@@ -7,7 +7,7 @@
   3. заполняет анкету шага 0 (ячейку P не трогает — ТЗ 18.2а);
   4. выполняет все ячейки ноутбука (Run All) обычным Python, в котором пакет mixuse не установлен:
      ноутбук должен сам найти папку mixuse рядом с собой;
-  5. результаты results/<код>_user_*.csv совпадают с эталонами results_v5/<код>/ (они посчитаны по YAML командой
+  5. результаты results/<код>_user_*.csv совпадают с эталонами tests/etalon/v5/<код>/ (они посчитаны по YAML командой
      compare — так проверяется и 18.2: анкета и YAML дают один результат).
 Петербург (около 15 минут) — только при MIXUSE_ACCEPTANCE_SPB=1.
 """
@@ -22,8 +22,7 @@ import zipfile
 import pandas as pd
 import pytest
 
-from conftest import ROOT
-from test_etalon import same_strings
+from conftest import ROOT, ETALON_V5, same_strings
 from test_etalon_v5 import same_table, STR
 from user_forms import FORMS
 
@@ -113,7 +112,7 @@ def test_acceptance_as_user(code, tmp_path):
     fill_notebook(nb, code)
     out = run_all(prog, nb)
     assert 'MIXUSE_FROM ' + os.path.join(prog, 'mixuse') in out.replace('/', os.sep), 'mixuse взят не из скачанной папки'
-    ref_dir = os.path.join(ROOT, 'results_v5', code)
+    ref_dir = os.path.join(ETALON_V5, code)
     for name in sorted(os.listdir(ref_dir)):
         got = os.path.join(prog, 'results', name.replace(code + '_', code + '_user_', 1))
         assert os.path.exists(got), got
