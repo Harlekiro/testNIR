@@ -178,9 +178,9 @@ zone_dictionary.csv            словарь кодов зон → П / ОД (�
 | Набор | Откуда | Лицензия |
 |---|---|---|
 | `data/vysotsk/` — кварталы (пересохранены в EPSG:4326), здания, функциональные зоны генплана, сервисы, промышленность | архив автора `метод_сравнения_вариантов_v4.zip` (16.11.2026); первоисточник слоёв — `[УТОЧНИТЬ у автора]` | `[УТОЧНИТЬ у автора]` |
-| `data/gatchina_layers/` — кварталы, здания, сервисы | архив `gatchina_layers.zip` (ТЗ, раздел 2), подготовлен в проекте blocksnet-agent (`README_источника.md`) | `[УТОЧНИТЬ у автора]` |
+| `data/gatchina_layers/` — кварталы, здания, сервисы | архив `gatchina_layers.zip` (ТЗ, раздел 2), подготовлен в проекте blocksnet-agent. См. [оригинальный релиз проекта с данными Гатчины](https://github.com/Eynor-K/blocksnet-agent/releases/tag/v2026-data-gatchina) и [описание источника](data/gatchina_layers/README_источника.md) | `[УТОЧНИТЬ у автора]` |
 | `data/gatchina_layers/services/` — 12 производственных предприятий, `заводы_отметка_автора.csv` | отметка автора по Яндекс Картам, 18.11.2026 (ТЗ 4.1.6) | `[УТОЧНИТЬ у автора]` |
-| `data/spb_full/` (не в репозитории) | архив blocksnet-data, папка `cities/saint_petersburg/data` (github.com/IDUclub/blocksnet-data) | `[УТОЧНИТЬ у автора]` |
+| `data/spb_full/` — исходные слои (скачиваются отдельно) | [IDUclub/blocksnet-data, папка `cities/saint_petersburg/data`](https://github.com/IDUclub/blocksnet-data/tree/main/cities/saint_petersburg/data) | `[УТОЧНИТЬ у автора]` |
 | `data/<код>/access/` — матрица доступности `matrix_walk.npz` и точный расчёт `provision_walk.json` | рассчитаны программой по пешеходному графу из файлов регионов OpenStreetMap (`data/osm/*.osm.pbf`, выгрузки openstreetmap.fr) | ODbL 1.0 (см. ниже) |
 
 **OpenStreetMap.** Матрицы доступности и точный расчёт «как есть» построены по данным OpenStreetMap:
@@ -188,6 +188,14 @@ zone_dictionary.csv            словарь кодов зон → П / ОД (�
 лицензии Open Database License (ODbL) 1.0 (https://opendatacommons.org/licenses/odbl/1-0/); производные базы данных
 (матрицы `matrix_walk.npz`, файлы `provision_walk.json`) распространяются на тех же условиях. Если слои набора
 (здания, сервисы, зоны) взяты из OpenStreetMap, к ним относится та же атрибуция.
+
+### Как скачать слои Санкт-Петербурга
+
+1. Скачайте [ZIP исходного репозитория blocksnet-data](https://github.com/IDUclub/blocksnet-data/archive/81ae16f577aff8644c42bb0fef9dc19330e3871a.zip) и распакуйте его. Ссылка закреплена на версии слоёв, использованной в проекте.
+2. Скопируйте **содержимое** папки `cities/saint_petersburg/data/` из распакованного архива в `data/spb_full/` вашего экземпляра testNIR. В `data/spb_full/` должны оказаться `blocks.geojson`, `buildings.geojson`, `functional_zones.geojson`, `land_use_rules.json` и папка `services/`.
+3. Из корня testNIR проверьте слои командой `python -m mixuse check configs/spb_full.yaml`.
+
+Для точного расчёта обеспеченности школами и садами подготовьте пешеходную матрицу отдельно командой `подготовить_город.bat configs\spb_full.yaml`. Подробности ниже.
 
 ## Матрица доступности (точный расчёт школ и садов)
 
